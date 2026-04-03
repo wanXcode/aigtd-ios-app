@@ -33,7 +33,7 @@
 		3B0D19F4FEB5D7DFC049EAC5 /* AppleRemindersMapping.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleRemindersMapping.swift; sourceTree = "<group>"; };
 		5BD5CC43506B2F329746582C /* PersistenceModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistenceModels.swift; sourceTree = "<group>"; };
 		7D792DDE49370EE7C7CAE3A3 /* ChatHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatHomeView.swift; sourceTree = "<group>"; };
-		802BD0311C392351E4A189C2 /* AIGTDReminders.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = AIGTDReminders.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		802BD0311C392351E4A189C2 /* AIGTD Reminders.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "AIGTD Reminders.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		87480D675543CCDECFB891CB /* OnboardingRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingRootView.swift; sourceTree = "<group>"; };
 		9F133E21C3EDDC5486091F74 /* AgentHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentHomeView.swift; sourceTree = "<group>"; };
 		C87E4ACD49E00FC289F8C284 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
@@ -67,7 +67,7 @@
 		22E507A2BE1C23BDB7861D40 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				802BD0311C392351E4A189C2 /* AIGTDReminders.app */,
+				802BD0311C392351E4A189C2 /* AIGTD Reminders.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -160,7 +160,7 @@
 			packageProductDependencies = (
 			);
 			productName = AIGTDReminders;
-			productReference = 802BD0311C392351E4A189C2 /* AIGTDReminders.app */;
+			productReference = 802BD0311C392351E4A189C2 /* AIGTD Reminders.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -171,8 +171,6 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
-				TargetAttributes = {
-				};
 			};
 			buildConfigurationList = 895734504410A17C34C27305 /* Build configuration list for PBXProject "AIGTDReminders" */;
 			developmentRegion = en;
@@ -288,6 +286,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = 85T4PAN9HD;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = AIGTD;
 				INFOPLIST_KEY_NSRemindersFullAccessUsageDescription = "AIGTD needs access to your reminders so it can read, create, and update tasks for you.";
@@ -310,6 +309,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = 85T4PAN9HD;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = AIGTD;
 				INFOPLIST_KEY_NSRemindersFullAccessUsageDescription = "AIGTD needs access to your reminders so it can read, create, and update tasks for you.";

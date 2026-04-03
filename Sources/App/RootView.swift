@@ -11,6 +11,7 @@ struct RootView: View {
                 OnboardingRootView()
             }
         }
+        .preferredColorScheme(.light)
         .task {
             await appModel.refreshReminderPermission()
         }
