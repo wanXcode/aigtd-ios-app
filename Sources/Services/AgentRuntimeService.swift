@@ -12,37 +12,47 @@ struct AgentModelConfiguration: Sendable {
 }
 
 struct AgentRuntimeService {
-    private let fallback = MockAgentService()
-
     func respond(
         to content: String,
         reminderLists: [ReminderListInfo],
-        configuration: AgentModelConfiguration?
+        reminderItems: [ReminderItemInfo],
+        configuration: AgentModelConfiguration?,
+        agentContext: AIGTDAgentRuntimeContext? = nil,
+        onTextUpdate: (@Sendable (String) async -> Void)? = nil
     ) async -> MockAgentResult {
-        let localInterpretation = fallback.respond(to: content, reminderLists: reminderLists)
-
         guard let configuration,
               configuration.provider.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
               configuration.modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
               configuration.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
-            return localInterpretation
+            let message = readableRemoteFailureMessage(from: AgentRuntimeError.invalidConfiguration)
+            return MockAgentResult(
+                reply: message.reply,
+                summary: message.summary,
+                actionType: nil,
+                payloadJSON: "{}",
+                confidence: 0.0,
+                followUpPrompt: message.followUpPrompt
+            )
         }
 
         do {
-            let remoteResult = try await requestRemoteResponse(
+            return try await requestRemoteResponse(
                 content: content,
                 reminderLists: reminderLists,
-                configuration: configuration
+                reminderItems: reminderItems,
+                configuration: configuration,
+                agentContext: agentContext,
+                onTextUpdate: onTextUpdate
             )
-            return reconcile(remoteResult: remoteResult, localResult: localInterpretation)
         } catch {
+            let message = readableRemoteFailureMessage(from: error)
             return MockAgentResult(
-                reply: localInterpretation.reply,
-                summary: "\(localInterpretation.summary) · 远端调用失败，已回退本地规则",
-                actionType: localInterpretation.actionType,
-                payloadJSON: localInterpretation.payloadJSON,
-                confidence: localInterpretation.confidence,
-                followUpPrompt: localInterpretation.followUpPrompt
+                reply: message.reply,
+                summary: message.summary,
+                actionType: nil,
+                payloadJSON: "{}",
+                confidence: 0.0,
+                followUpPrompt: message.followUpPrompt
             )
         }
     }
@@ -63,6 +73,14 @@ struct AgentRuntimeService {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw AgentRuntimeError.invalidResponse
         }
+        await MainActor.run {
+            RemoteResponseDebugStore.shared.saveRaw(
+                endpoint: normalizedEndpoint(from: configuration),
+                wireAPI: normalizedWireAPI(from: configuration).rawValue,
+                statusCode: httpResponse.statusCode,
+                data: data
+            )
+        }
         guard (200..<300).contains(httpResponse.statusCode) else {
             throw AgentRuntimeError.httpStatus(
                 httpResponse.statusCode,
@@ -70,9 +88,9 @@ struct AgentRuntimeService {
             )
         }
 
-        let returnedText = try parseReturnedText(from: data, configuration: configuration)
+        let returnedText = try extractHealthCheckText(from: data, configuration: configuration)
         guard returnedText.isEmpty == false else {
-            throw AgentRuntimeError.invalidPayload
+            throw AgentRuntimeError.invalidPayload("")
         }
 
         return "连接成功，可正常访问 \(configuration.modelID)"
@@ -81,12 +99,29 @@ struct AgentRuntimeService {
     private func requestRemoteResponse(
         content: String,
         reminderLists: [ReminderListInfo],
-        configuration: AgentModelConfiguration
+        reminderItems: [ReminderItemInfo],
+        configuration: AgentModelConfiguration,
+        agentContext: AIGTDAgentRuntimeContext?,
+        onTextUpdate: (@Sendable (String) async -> Void)?
     ) async throws -> MockAgentResult {
+        if normalizedWireAPI(from: configuration) == .responses {
+            return try await requestRemoteStreamingResponse(
+                content: content,
+                reminderLists: reminderLists,
+                reminderItems: reminderItems,
+                configuration: configuration,
+                agentContext: agentContext,
+                onTextUpdate: onTextUpdate
+            )
+        }
+
+        let endpoint = normalizedEndpoint(from: configuration)
         let request = try makeRequest(
             content: content,
             reminderLists: reminderLists,
-            configuration: configuration
+            reminderItems: reminderItems,
+            configuration: configuration,
+            agentContext: agentContext
         )
         let sessionConfiguration = URLSessionConfiguration.ephemeral
         sessionConfiguration.timeoutIntervalForRequest = configuration.timeoutSeconds
@@ -96,6 +131,14 @@ struct AgentRuntimeService {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw AgentRuntimeError.invalidResponse
         }
+        await MainActor.run {
+            RemoteResponseDebugStore.shared.saveRaw(
+                endpoint: endpoint,
+                wireAPI: normalizedWireAPI(from: configuration).rawValue,
+                statusCode: httpResponse.statusCode,
+                data: data
+            )
+        }
         guard (200..<300).contains(httpResponse.statusCode) else {
             throw AgentRuntimeError.httpStatus(
                 httpResponse.statusCode,
@@ -103,27 +146,148 @@ struct AgentRuntimeService {
             )
         }
 
-        let content = try parseReturnedText(from: data, configuration: configuration)
-        guard let payload = extractJSONPayload(from: content),
-              let payloadData = payload.data(using: .utf8) else {
-            throw AgentRuntimeError.invalidPayload
+        let returnedText: String
+        do {
+            returnedText = try parseReturnedText(from: data, configuration: configuration)
+        } catch let runtimeError as AgentRuntimeError {
+            switch runtimeError {
+            case .invalidPayload:
+                throw AgentRuntimeError.invalidPayload(responseBodySummary(from: data))
+            default:
+                throw runtimeError
+            }
+        }
+        if let onTextUpdate {
+            await onTextUpdate(returnedText.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        return MockAgentResult(
+            reply: returnedText.trimmingCharacters(in: .whitespacesAndNewlines),
+            summary: "远端自然回复",
+            actionType: nil,
+            payloadJSON: "{}",
+            confidence: 0.82,
+            followUpPrompt: nil
+        )
+    }
+
+    private func requestRemoteStreamingResponse(
+        content: String,
+        reminderLists: [ReminderListInfo],
+        reminderItems: [ReminderItemInfo],
+        configuration: AgentModelConfiguration,
+        agentContext: AIGTDAgentRuntimeContext?,
+        onTextUpdate: (@Sendable (String) async -> Void)?
+    ) async throws -> MockAgentResult {
+        let endpoint = normalizedEndpoint(from: configuration)
+        let request = try makeRequest(
+            content: content,
+            reminderLists: reminderLists,
+            reminderItems: reminderItems,
+            configuration: configuration,
+            agentContext: agentContext,
+            forceStreaming: true
+        )
+        let sessionConfiguration = URLSessionConfiguration.ephemeral
+        sessionConfiguration.timeoutIntervalForRequest = configuration.timeoutSeconds
+        sessionConfiguration.timeoutIntervalForResource = configuration.timeoutSeconds
+
+        let (bytes, response) = try await URLSession(configuration: sessionConfiguration).bytes(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw AgentRuntimeError.invalidResponse
         }
 
-        let envelope = try JSONDecoder().decode(RemoteAgentEnvelope.self, from: payloadData)
+        var rawLines: [String] = []
+        var currentEvent = "message"
+        var currentDataLines: [String] = []
+        var latestResolvedText = ""
+        var lastPayloadSummary = ""
+
+        func consumeCurrentEvent() async {
+            guard currentDataLines.isEmpty == false else { return }
+            let payload = currentDataLines.joined(separator: "\n")
+            rawLines.append("event: \(currentEvent)")
+            rawLines.append("data: \(payload)")
+            rawLines.append("")
+            lastPayloadSummary = payload
+            if let extracted = extractReadableTextFromSSEPayload(payload, eventName: currentEvent, currentText: latestResolvedText),
+               extracted != latestResolvedText {
+                latestResolvedText = extracted
+                if let onTextUpdate {
+                    await onTextUpdate(latestResolvedText)
+                }
+            }
+            currentEvent = "message"
+            currentDataLines.removeAll(keepingCapacity: true)
+        }
+
+        for try await line in bytes.lines {
+            if line.isEmpty {
+                await consumeCurrentEvent()
+                continue
+            }
+
+            if line.hasPrefix("event:") {
+                await consumeCurrentEvent()
+                currentEvent = String(line.dropFirst("event:".count)).trimmingCharacters(in: .whitespaces)
+                continue
+            }
+
+            if line.hasPrefix("data:") {
+                let dataLine = String(line.dropFirst("data:".count)).trimmingCharacters(in: .whitespaces)
+                if dataLine == "[DONE]" {
+                    rawLines.append("event: \(currentEvent)")
+                    rawLines.append("data: [DONE]")
+                    rawLines.append("")
+                    await consumeCurrentEvent()
+                    break
+                }
+                currentDataLines.append(dataLine)
+            }
+        }
+        await consumeCurrentEvent()
+
+        let rawBody = rawLines.joined(separator: "\n")
+        await MainActor.run {
+            RemoteResponseDebugStore.shared.save(
+                endpoint: endpoint,
+                wireAPI: normalizedWireAPI(from: configuration).rawValue,
+                statusCode: httpResponse.statusCode,
+                body: rawBody
+            )
+        }
+
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            throw AgentRuntimeError.httpStatus(
+                httpResponse.statusCode,
+                rawBody.isEmpty ? lastPayloadSummary : rawBody
+            )
+        }
+
+        let resolvedText = latestResolvedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard resolvedText.isEmpty == false else {
+            throw AgentRuntimeError.invalidPayload(rawBody.isEmpty ? lastPayloadSummary : rawBody)
+        }
+        if let onTextUpdate {
+            await onTextUpdate(resolvedText)
+        }
+
         return MockAgentResult(
-            reply: envelope.reply,
-            summary: envelope.summary,
-            actionType: envelope.action.intent,
-            payloadJSON: encodePayload(envelope.toMockEnvelope()),
-            confidence: envelope.confidence,
-            followUpPrompt: envelope.followUpPrompt
+            reply: resolvedText,
+            summary: "远端流式自然回复",
+            actionType: nil,
+            payloadJSON: "{}",
+            confidence: 0.82,
+            followUpPrompt: nil
         )
     }
 
     private func makeRequest(
         content: String,
         reminderLists: [ReminderListInfo],
-        configuration: AgentModelConfiguration
+        reminderItems: [ReminderItemInfo],
+        configuration: AgentModelConfiguration,
+        agentContext: AIGTDAgentRuntimeContext?,
+        forceStreaming: Bool = false
     ) throws -> URLRequest {
         let endpoint = normalizedEndpoint(from: configuration)
         guard let url = URL(string: endpoint) else {
@@ -131,47 +295,11 @@ struct AgentRuntimeService {
         }
 
         let availableLists = reminderLists.map(\.title).joined(separator: "、")
-        let systemPrompt = """
-        你是一个 iOS Reminders 助手。你必须把用户输入解析成结构化 JSON。
-        可用 intent 只有：
-        - create_reminder
-        - create_list
-        - summarize_lists
-        - capture_message
-        - move_reminder
-        - complete_reminder
-
-        当前用户已有的提醒事项列表：\(availableLists.isEmpty ? "无" : availableLists)
-
-        你必须只输出 JSON，不要输出 Markdown，不要输出解释。JSON 结构如下：
-        {
-          "reply": "给用户看的自然语言回复",
-          "summary": "简短执行摘要",
-          "confidence": 0.0,
-          "followUpPrompt": "可选，后续建议",
-          "matchedSignals": ["signal"],
-          "action": {
-            "intent": "create_reminder",
-            "title": "动作标题",
-            "entities": {
-              "title": "任务标题",
-              "due_date": "可选，ISO8601 时间",
-              "preferred_list_name": "可选，目标列表名",
-              "note": "可选，备注",
-              "bucket": "today/tomorrow/future",
-              "category": "inbox/project/next_action/waiting_for/maybe",
-              "source_text": "原始输入"
-            },
-            "requiresConfirmation": false
-          }
-        }
-
-        规则：
-        - 只要用户明显是在创建一条提醒事项或任务，就优先返回 create_reminder，不要返回 capture_message。
-        - 如果用户说了今天、明天、后天、下周几、具体日期，要尽量填 due_date。
-        - 如果用户提到了已有提醒事项列表名，要填 preferred_list_name。
-        - 只有在你确实无法判断用户想执行什么时，才返回 capture_message。
-        """
+        let systemPrompt = buildSystemPrompt(
+            availableLists: availableLists,
+            reminderItems: reminderItems,
+            agentContext: agentContext
+        )
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -180,9 +308,56 @@ struct AgentRuntimeService {
         request.httpBody = try makeRequestBody(
             systemPrompt: systemPrompt,
             userContent: content,
-            configuration: configuration
+            configuration: configuration,
+            streamOverride: forceStreaming
         )
         return request
+    }
+
+    private func buildSystemPrompt(
+        availableLists: String,
+        reminderItems: [ReminderItemInfo],
+        agentContext: AIGTDAgentRuntimeContext?
+    ) -> String {
+        let openItemCount = reminderItems.filter { !$0.isCompleted }.count
+        let todayItems = reminderItems.filter { item in
+            guard let dueDate = item.dueDate else { return false }
+            return Calendar.current.isDateInToday(dueDate)
+        }
+        let recentPreview = reminderItems
+            .filter { !$0.isCompleted }
+            .prefix(8)
+            .map { item in
+                let list = item.listTitle.isEmpty ? "默认清单" : item.listTitle
+                return "- \(item.title) · \(list)"
+            }
+            .joined(separator: "\n")
+
+        let memoryBlock = agentContext?.memory.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let operatingGuideBlock = agentContext?.operatingGuide.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        return """
+        你是 AIGTD，一个长期在线的个人事务管理助手。你现在在 iPhone App 里和用户直接对话。
+
+        你的目标：
+        - 像事务秘书一样接话，先结论，后补充
+        - 说人话，不要输出 JSON，不要输出代码块，不要解释接口
+        - 简短、自然、稳，不要机械
+
+        当前提醒事项列表：\(availableLists.isEmpty ? "无" : availableLists)
+        当前未完成事项数：\(openItemCount)
+        今天到期事项数：\(todayItems.count)
+        最近事项预览：
+        \(recentPreview.isEmpty ? "- 暂无" : recentPreview)
+
+        用户记忆：
+        \(memoryBlock.isEmpty ? "暂无额外记忆" : memoryBlock)
+
+        协作原则：
+        \(operatingGuideBlock.isEmpty ? "- 直接接住用户的话，默认按事务管理语境理解。" : operatingGuideBlock)
+
+        现在请只输出给用户看的自然语言回复正文。
+        """
     }
 
     private func makeHealthCheckRequest(
@@ -229,7 +404,8 @@ struct AgentRuntimeService {
         userContent: String,
         configuration: AgentModelConfiguration,
         maxTokensOverride: Int? = nil,
-        temperatureOverride: Double? = nil
+        temperatureOverride: Double? = nil,
+        streamOverride: Bool? = nil
     ) throws -> Data {
         switch normalizedWireAPI(from: configuration) {
         case .chatCompletions:
@@ -240,67 +416,342 @@ struct AgentRuntimeService {
                     .init(role: "user", content: userContent)
                 ],
                 temperature: temperatureOverride ?? configuration.temperature,
-                maxTokens: maxTokensOverride ?? configuration.maxTokens,
-                responseFormat: .init(type: "json_object")
+                maxTokens: maxTokensOverride ?? configuration.maxTokens
             )
             return try JSONEncoder().encode(requestBody)
         case .responses:
             let requestBody = OpenAIResponsesRequest(
                 model: configuration.modelID,
-                input: [
-                    .init(role: "system", content: [.init(type: "input_text", text: systemPrompt)]),
-                    .init(role: "user", content: [.init(type: "input_text", text: userContent)])
-                ],
+                instructions: systemPrompt,
+                input: userContent,
+                text: .init(format: .init(type: "text")),
                 temperature: temperatureOverride ?? configuration.temperature,
-                maxOutputTokens: maxTokensOverride ?? configuration.maxTokens
+                maxOutputTokens: maxTokensOverride ?? configuration.maxTokens,
+                store: false,
+                stream: streamOverride
             )
             return try JSONEncoder().encode(requestBody)
         }
     }
 
     private func parseReturnedText(from data: Data, configuration: AgentModelConfiguration) throws -> String {
-        switch normalizedWireAPI(from: configuration) {
-        case .chatCompletions:
-            let completion = try JSONDecoder().decode(OpenAICompatibleChatResponse.self, from: data)
-            guard let content = completion.choices.first?.message.content else {
-                throw AgentRuntimeError.invalidPayload
+        if let strictParsed = try? parseReturnedTextStrictly(from: data),
+           strictParsed.isEmpty == false {
+            return strictParsed
+        }
+
+        if let object = try? JSONSerialization.jsonObject(with: data),
+           let extracted = extractReadableTextFromOfficialCompatibleShape(object),
+           extracted.isEmpty == false {
+            return extracted
+        }
+
+        if let raw = String(data: data, encoding: .utf8),
+           let extracted = extractReadableTextFromRawJSONString(raw),
+           extracted.isEmpty == false {
+            return extracted
+        }
+
+        throw AgentRuntimeError.invalidPayload("")
+    }
+
+    private func parseReturnedTextStrictly(from data: Data) throws -> String {
+        if let completion = try? JSONDecoder().decode(OpenAICompatibleChatResponse.self, from: data) {
+            if let content = completion.choices.first?.resolvedText ?? completion.text,
+               content.isEmpty == false {
+                return content
             }
-            return content
-        case .responses:
-            let response = try JSONDecoder().decode(OpenAIResponsesResponse.self, from: data)
+        }
+
+        if let response = try? JSONDecoder().decode(OpenAIResponsesResponse.self, from: data) {
             let text = response.output
                 .flatMap(\.content)
-                .filter { $0.type == "output_text" }
+                .filter { $0.type == "output_text" || $0.type == "text" }
                 .compactMap(\.text)
                 .joined(separator: "\n")
-            guard text.isEmpty == false else {
-                throw AgentRuntimeError.invalidPayload
+            let fallbackText = response.outputText?.joined(separator: "\n") ?? ""
+            let resolvedText = text.isEmpty == false ? text : fallbackText
+            if resolvedText.isEmpty == false {
+                return resolvedText
             }
-            return text
         }
+
+        throw AgentRuntimeError.invalidPayload("")
     }
 
-    private func extractJSONPayload(from content: String) -> String? {
-        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.first == "{" && trimmed.last == "}" {
-            return trimmed
+    private func extractReadableTextFromOfficialCompatibleShape(_ object: Any) -> String? {
+        if let chatText = extractChatCompletionText(fromJSONObject: object) {
+            return chatText
+        }
+        if let responsesText = extractResponsesText(fromJSONObject: object) {
+            return responsesText
         }
 
-        guard let start = trimmed.firstIndex(of: "{"),
-              let end = trimmed.lastIndex(of: "}") else {
+        guard let dict = object as? [String: Any] else { return nil }
+        for key in ["reply", "response", "answer"] {
+            if let value = dict[key] as? String,
+               value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+                return value.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        return nil
+    }
+
+    private func extractChatCompletionText(fromJSONObject object: Any) -> String? {
+        guard let dict = object as? [String: Any] else { return nil }
+        if let choices = dict["choices"] as? [[String: Any]] {
+            for choice in choices {
+                if let message = choice["message"] as? [String: Any],
+                   let content = extractChatMessageText(from: message) {
+                    return content
+                }
+                if let text = choice["text"] as? String,
+                   text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+                    return text.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+            }
+        }
+        if let text = dict["text"] as? String,
+           text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return nil
+    }
+
+    private func extractResponsesText(fromJSONObject object: Any) -> String? {
+        guard let dict = object as? [String: Any] else { return nil }
+        if let outputText = extractChatMessageContent(dict["output_text"]) {
+            return outputText
+        }
+        if let outputTextParts = dict["output_text"] as? [String] {
+            let joined = outputTextParts.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            if joined.isEmpty == false {
+                return joined
+            }
+        }
+        if let output = dict["output"] as? [[String: Any]] {
+            var parts: [String] = []
+            for item in output {
+                if let content = item["content"] as? [[String: Any]] {
+                    for contentItem in content {
+                        let type = (contentItem["type"] as? String)?.lowercased()
+                        guard type == "output_text" || type == "text" else { continue }
+                        if let text = extractChatMessageContent(contentItem["text"]) {
+                            parts.append(text)
+                        }
+                    }
+                }
+            }
+            let joined = parts.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            if joined.isEmpty == false {
+                return joined
+            }
+        }
+        return nil
+    }
+
+    private func extractReadableTextFromRawJSONString(_ raw: String) -> String? {
+        let candidateKeys = [
+            "reasoning_content",
+            "content",
+            "output_text",
+            "text",
+            "answer",
+            "response"
+        ]
+
+        for key in candidateKeys {
+            if let value = firstJSONStringValue(forKey: key, in: raw)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+               value.isEmpty == false {
+                return value
+            }
+        }
+
+        return nil
+    }
+
+    private func extractReadableTextFromSSEPayload(_ raw: String, eventName: String, currentText: String = "") -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else { return nil }
+
+        if let data = trimmed.data(using: .utf8),
+           let object = try? JSONSerialization.jsonObject(with: data) {
+            if let dict = object as? [String: Any] {
+                if eventName == "response.output_text.delta",
+                   let delta = dict["delta"] as? String,
+                   delta.isEmpty == false {
+                    return currentText + delta
+                }
+
+                if let type = dict["type"] as? String,
+                   type == "response.output_text.delta",
+                   let delta = dict["delta"] as? String,
+                   delta.isEmpty == false {
+                    return currentText + delta
+                }
+            }
+
+            if let extracted = extractReadableTextFromOfficialCompatibleShape(object),
+               extracted.isEmpty == false {
+                return extracted
+            }
+
+            if let dict = object as? [String: Any] {
+                for key in ["part", "delta", "item", "response"] {
+                    if let nested = dict[key],
+                       let extracted = extractReadableTextFromOfficialCompatibleShape(nested),
+                       extracted.isEmpty == false {
+                        return extracted
+                    }
+                }
+            }
+        }
+
+        return extractReadableTextFromRawJSONString(trimmed)
+    }
+
+    private func firstJSONStringValue(forKey key: String, in raw: String) -> String? {
+        let pattern = "\"\(NSRegularExpression.escapedPattern(for: key))\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\""
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let nsRange = NSRange(raw.startIndex..<raw.endIndex, in: raw)
+        guard let match = regex.firstMatch(in: raw, range: nsRange),
+              match.numberOfRanges > 1,
+              let range = Range(match.range(at: 1), in: raw) else {
             return nil
         }
-        return String(trimmed[start...end])
+
+        let escapedValue = String(raw[range])
+        let wrapped = "\"\(escapedValue)\""
+        if let data = wrapped.data(using: .utf8),
+           let decoded = try? JSONDecoder().decode(String.self, from: data) {
+            return decoded
+        }
+        return escapedValue.replacingOccurrences(of: "\\n", with: "\n")
     }
 
-    private func encodePayload(_ envelope: MockAgentEnvelope) -> String {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        guard let data = try? encoder.encode(envelope),
-              let string = String(data: data, encoding: .utf8) else {
-            return "{}"
+    private func extractChatMessageText(from message: [String: Any]) -> String? {
+        if let content = extractChatMessageContent(message["content"]) {
+            return content
         }
-        return string
+
+        let fallbackKeys = [
+            "reasoning_content",
+            "output_text",
+            "text",
+            "answer",
+            "response"
+        ]
+        for key in fallbackKeys {
+            if let text = extractChatMessageContent(message[key]) {
+                return text
+            }
+        }
+
+        return nil
+    }
+
+    private func extractChatMessageContent(_ content: Any?) -> String? {
+        if let text = content as? String {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        if let parts = content as? [String: Any] {
+            for key in ["text", "content", "value"] {
+                if let nested = extractChatMessageContent(parts[key]) {
+                    return nested
+                }
+            }
+        }
+        if let parts = content as? [[String: Any]] {
+            let texts = parts.compactMap { part -> String? in
+                let type = (part["type"] as? String)?.lowercased()
+                guard type == nil || type == "text" || type == "output_text" || type == "input_text" else { return nil }
+                if let nestedText = extractChatMessageContent(part["text"]) {
+                    return nestedText
+                }
+                if let nested = extractChatMessageContent(part["content"]) {
+                    return nested
+                }
+                if let nested = extractChatMessageContent(part["value"]) {
+                    return nested
+                }
+                return nil
+            }
+            let joined = texts.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            return joined.isEmpty ? nil : joined
+        }
+        return nil
+    }
+
+    private func extractHealthCheckText(from data: Data, configuration: AgentModelConfiguration) throws -> String {
+            if let parsed = try? parseReturnedText(from: data, configuration: configuration),
+           parsed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            return parsed
+        }
+
+        if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if let message = (object["error"] as? [String: Any])?["message"] as? String,
+               message.isEmpty == false {
+                return message
+            }
+            if let text = object["output_text"] as? String, text.isEmpty == false {
+                return text
+            }
+            if let texts = object["output_text"] as? [String], texts.isEmpty == false {
+                return texts.joined(separator: "\n")
+            }
+        }
+
+        guard let raw = String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              raw.isEmpty == false else {
+            throw AgentRuntimeError.invalidPayload("")
+        }
+        return raw
+    }
+
+    private func readableRemoteFailureMessage(from error: Error) -> (reply: String, summary: String, followUpPrompt: String?) {
+        if let runtimeError = error as? AgentRuntimeError {
+            switch runtimeError {
+            case .invalidConfiguration:
+                return (
+                    "还没连上可用模型，先去 Agent 页把模型配置完整再发这条消息。",
+                    "模型配置不完整",
+                    "至少需要 provider、model、API key 这三项。"
+                )
+            case let .invalidPayload(bodySummary):
+                let trimmedSummary = bodySummary.trimmingCharacters(in: .whitespacesAndNewlines)
+                let debugLine = trimmedSummary.isEmpty ? "" : "\n返回摘要：\(trimmedSummary)"
+                return (
+                    "远端模型已经连上了，但这次返回内容不是当前 Chat 能直接吃下来的格式。\(debugLine)",
+                    "远端返回格式暂未兼容",
+                    trimmedSummary.isEmpty ? "我下一步会按这个 provider 的真实返回继续兼容。" : "我已经把返回摘要带出来了，按这段继续兼容就行。"
+                )
+            case let .httpStatus(statusCode, body):
+                return (
+                    "远端模型这次回了 HTTP \(statusCode)。",
+                    "远端请求失败：HTTP \(statusCode)",
+                    body.isEmpty ? "你可以先去 Agent 里再测一次连接。" : body
+                )
+            default:
+                break
+            }
+        }
+
+        if let urlError = error as? URLError {
+            return (
+                "远端模型这次网络请求没走通，哥哥稍后再试一下。",
+                "远端网络请求失败",
+                urlError.localizedDescription
+            )
+        }
+
+        return (
+            "远端模型这次没有正常完成回复。",
+            "远端模型暂时不可用",
+            String(describing: error)
+        )
     }
 
     private func responseBodySummary(from data: Data) -> String {
@@ -310,36 +761,19 @@ struct AgentRuntimeService {
             return "无返回内容"
         }
 
-        if text.count > 280 {
-            return String(text.prefix(280)) + "…"
+        if text.count > 1400 {
+            let head = String(text.prefix(900))
+            let tail = String(text.suffix(400))
+            return "\(head)\n…\n\(tail)"
         }
         return text
-    }
-
-    private func reconcile(
-        remoteResult: MockAgentResult,
-        localResult: MockAgentResult
-    ) -> MockAgentResult {
-        guard remoteResult.actionType == MockAgentIntent.captureMessage.rawValue,
-              localResult.actionType != MockAgentIntent.captureMessage.rawValue else {
-            return remoteResult
-        }
-
-        return MockAgentResult(
-            reply: localResult.reply,
-            summary: "\(localResult.summary) · 已用本地规则替换保守解析",
-            actionType: localResult.actionType,
-            payloadJSON: localResult.payloadJSON,
-            confidence: localResult.confidence,
-            followUpPrompt: localResult.followUpPrompt
-        )
     }
 }
 
 private enum AgentRuntimeError: LocalizedError {
     case invalidURL
     case invalidResponse
-    case invalidPayload
+    case invalidPayload(String)
     case invalidConfiguration
     case httpStatus(Int, String)
 
@@ -349,8 +783,11 @@ private enum AgentRuntimeError: LocalizedError {
             return "请求地址无效，请检查 Base URL。"
         case .invalidResponse:
             return "服务返回了无法识别的响应。"
-        case .invalidPayload:
-            return "服务返回成功，但内容格式不是当前 App 可解析的结果。"
+        case let .invalidPayload(bodySummary):
+            if bodySummary.isEmpty {
+                return "服务返回成功，但内容格式不是当前 App 可解析的结果。"
+            }
+            return "服务返回成功，但内容格式不是当前 App 可解析的结果。返回摘要：\(bodySummary)"
         case .invalidConfiguration:
             return "模型配置不完整。"
         case let .httpStatus(statusCode, body):
@@ -364,14 +801,12 @@ private struct OpenAICompatibleChatRequest: Encodable {
     let messages: [OpenAIMessage]
     let temperature: Double
     let maxTokens: Int
-    let responseFormat: OpenAIResponseFormat
 
     enum CodingKeys: String, CodingKey {
         case model
         case messages
         case temperature
         case maxTokens = "max_tokens"
-        case responseFormat = "response_format"
     }
 }
 
@@ -380,48 +815,108 @@ private struct OpenAIMessage: Encodable {
     let content: String
 }
 
-private struct OpenAIResponseFormat: Encodable {
-    let type: String
-}
-
 private struct OpenAICompatibleChatResponse: Decodable {
     let choices: [Choice]
+    let text: String?
 
     struct Choice: Decodable {
-        let message: Message
+        let message: Message?
+        let text: String?
+
+        var resolvedText: String? {
+            if let messageText = message?.resolvedContent, messageText.isEmpty == false {
+                return messageText
+            }
+            if let text, text.isEmpty == false {
+                return text
+            }
+            return nil
+        }
     }
 
     struct Message: Decodable {
-        let content: String
+        let content: Content
+
+        var resolvedContent: String? {
+            content.textValue
+        }
+    }
+
+    enum Content: Decodable {
+        case text(String)
+        case parts([Part])
+
+        var textValue: String? {
+            switch self {
+            case let .text(value):
+                return value
+            case let .parts(parts):
+                let joined = parts.compactMap(\.text).joined(separator: "\n")
+                return joined.isEmpty ? nil : joined
+            }
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            if let text = try? container.decode(String.self) {
+                self = .text(text)
+                return
+            }
+            if let parts = try? container.decode([Part].self) {
+                self = .parts(parts)
+                return
+            }
+            throw DecodingError.typeMismatch(
+                Content.self,
+                .init(codingPath: decoder.codingPath, debugDescription: "Unsupported content payload")
+            )
+        }
+    }
+
+    struct Part: Decodable {
+        let type: String?
+        let text: String?
     }
 }
 
 private struct OpenAIResponsesRequest: Encodable {
     let model: String
-    let input: [OpenAIResponsesInputItem]
+    let instructions: String?
+    let input: String
+    let text: OpenAIResponsesTextFormat?
     let temperature: Double
     let maxOutputTokens: Int
+    let store: Bool?
+    let stream: Bool?
 
     enum CodingKeys: String, CodingKey {
         case model
+        case instructions
         case input
+        case text
         case temperature
         case maxOutputTokens = "max_output_tokens"
+        case store
+        case stream
     }
 }
 
-private struct OpenAIResponsesInputItem: Encodable {
-    let role: String
-    let content: [OpenAIResponsesContentItem]
+private struct OpenAIResponsesTextFormat: Encodable {
+    let format: OpenAIResponsesTextFormatValue
 }
 
-private struct OpenAIResponsesContentItem: Encodable {
+private struct OpenAIResponsesTextFormatValue: Encodable {
     let type: String
-    let text: String
 }
 
 private struct OpenAIResponsesResponse: Decodable {
     let output: [OutputItem]
+    let outputText: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case output
+        case outputText = "output_text"
+    }
 
     struct OutputItem: Decodable {
         let content: [ContentItem]

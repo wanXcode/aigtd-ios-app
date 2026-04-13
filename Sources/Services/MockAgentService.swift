@@ -52,10 +52,12 @@ struct MockAgentResult: Sendable {
 
 struct MockAgentService {
     private let mappingRuleEngine = AppleRemindersMappingRuleEngine()
+    private let preferredUserAddress = "哥哥"
 
     private let stopPrefixes = [
         "提醒我", "帮我", "记得", "记一下", "记录一下", "新增任务", "加个任务",
-        "新建任务", "创建任务", "待办", "todo", "todo:", "todo："
+        "新建任务", "创建任务", "记一个任务", "记个任务", "帮我记一个任务", "帮我记个任务",
+        "帮我记个待办", "帮我记一个待办", "待办", "todo", "todo:", "todo："
     ]
 
     private let trimTails = [
@@ -67,6 +69,11 @@ struct MockAgentService {
         "已出初步方案", "需要确认", "等老板", "等对方"
     ]
 
+    private let casualProbeHints = [
+        "测试一下", "测试下", "试一下", "试试", "看看这个系统", "这个系统怎么样",
+        "你在吗", "在吗", "hello", "hi", "你好", "测试系统"
+    ]
+
     private let categoryHints: [String: [String]] = [
         "waiting_for": ["等确认", "等回复", "等待", "待确认", "待回复", "跟进", "催一下", "等对方"],
         "project": ["项目", "规划", "方案", "系统", "版本", "升级", "搭建", "建设"],
@@ -76,8 +83,12 @@ struct MockAgentService {
 
     func respond(
         to content: String,
-        reminderLists: [ReminderListInfo]
+        reminderLists: [ReminderListInfo],
+        reminderItems: [ReminderItemInfo],
+        agentContext: AIGTDAgentRuntimeContext? = nil
     ) -> MockAgentResult {
+        let preferredUserAddress = resolvedUserAddress(from: agentContext)
+
         if let reminder = detectReminderCreation(from: content, reminderLists: reminderLists) {
             let action = MockAgentAction(
                 intent: .createReminder,
@@ -95,6 +106,25 @@ struct MockAgentService {
             )
         }
 
+        if isCasualProbe(content) {
+            let action = MockAgentAction(
+                intent: .captureMessage,
+                title: "接住这句话",
+                entities: [
+                    "text": content
+                ],
+                requiresConfirmation: false
+            )
+            return makeResult(
+                reply: "我在，\(preferredUserAddress)。你直接告诉我要记什么、改什么，或者问我今天还有什么事就行。",
+                summary: "这句我先接住了，还没往提醒事项里创建内容",
+                action: action,
+                confidence: 0.96,
+                followUpPrompt: "比如你可以直接说：明天提醒我给张闯回信。",
+                matchedSignals: ["casual_probe"]
+            )
+        }
+
         if let completion = detectCompletion(from: content) {
             let action = MockAgentAction(
                 intent: .completeReminder,
@@ -105,11 +135,11 @@ struct MockAgentService {
                 requiresConfirmation: false
             )
             return makeResult(
-                reply: "我会把这条按完成处理。",
-                summary: "建议完成：\(completion.target)",
+                reply: "好的，\(preferredUserAddress)。这条我帮你标记完成。",
+                summary: "准备完成：\(completion.target)",
                 action: action,
                 confidence: completion.confidence,
-                followUpPrompt: "如果你想，我也可以顺手帮你归档或加备注。",
+                followUpPrompt: "如果你愿意，我也可以继续帮你挪清单、补备注，或者看看今天还剩什么。",
                 matchedSignals: completion.signals
             )
         }
@@ -125,11 +155,11 @@ struct MockAgentService {
                 requiresConfirmation: false
             )
             return makeResult(
-                reply: "收到，我会把它移动过去。",
-                summary: "建议移动到：\(movement.destinationList)",
+                reply: "改好了，\(preferredUserAddress)。这条我帮你挪过去。",
+                summary: "准备移动到：\(movement.destinationList)",
                 action: action,
                 confidence: movement.confidence,
-                followUpPrompt: "如果这是新分类，我也可以帮你创建同名列表。",
+                followUpPrompt: "如果这类事情以后都放这里，我也可以顺手帮你把清单整理一下。",
                 matchedSignals: movement.signals
             )
         }
@@ -144,35 +174,34 @@ struct MockAgentService {
                 requiresConfirmation: false
             )
             return makeResult(
-                reply: "记好了，我会把它作为一个新列表来处理。",
-                summary: "建议创建列表：\(listName)",
+                reply: "记好了，\(preferredUserAddress)。我帮你建这个清单。",
+                summary: "准备创建列表：\(listName)",
                 action: action,
                 confidence: 0.94,
-                followUpPrompt: "你也可以直接告诉我它应该归到哪个提醒事项来源。",
+                followUpPrompt: "接下来你可以直接告诉我，哪些事情要放进这个清单。",
                 matchedSignals: ["list_creation"]
             )
         }
 
-        if content.contains("今天") && content.contains("什么") {
-            let listCount = reminderLists.count
-            let reply = listCount == 0
-                ? "你现在还没有任何提醒事项列表。"
-                : "你现在共有 \(listCount) 个提醒事项列表。"
+        if let summary = detectSummaryRequest(
+            from: content,
+            reminderLists: reminderLists,
+            reminderItems: reminderItems,
+            preferredUserAddress: preferredUserAddress
+        ) {
             let action = MockAgentAction(
                 intent: .summarizeLists,
-                title: "汇总提醒事项列表",
-                entities: [
-                    "list_count": String(listCount)
-                ],
+                title: "查看提醒事项",
+                entities: summary.entities,
                 requiresConfirmation: false
             )
             return makeResult(
-                reply: reply,
-                summary: "列表摘要已生成",
+                reply: summary.reply,
+                summary: summary.summary,
                 action: action,
-                confidence: 0.82,
-                followUpPrompt: reminderLists.isEmpty ? "要不要我先帮你建一套起步分类？" : "你也可以直接说要看哪一个列表。",
-                matchedSignals: ["list_summary"]
+                confidence: summary.confidence,
+                followUpPrompt: summary.followUpPrompt,
+                matchedSignals: summary.signals
             )
         }
 
@@ -185,12 +214,114 @@ struct MockAgentService {
             requiresConfirmation: false
         )
         return makeResult(
-            reply: "已收到。我先把这条记录下来，再根据内容判断下一步。",
-            summary: "本地保存成功",
+            reply: "收到，\(preferredUserAddress)。你继续说，我来帮你收口成任务或安排。",
+            summary: "先替你记下来了",
             action: action,
             confidence: 0.68,
-            followUpPrompt: "你可以继续补充时间、清单名，或者直接说要创建、移动、完成。",
+            followUpPrompt: "你可以直接补一句时间、清单名，或者告诉我要创建、移动、完成哪条。",
             matchedSignals: ["capture"]
+        )
+    }
+
+    private func resolvedUserAddress(from agentContext: AIGTDAgentRuntimeContext?) -> String {
+        guard let memory = agentContext?.memory, memory.isEmpty == false else {
+            return preferredUserAddress
+        }
+
+        let patterns = [
+            #"称呼[：:]\s*([^\n]+)"#,
+            #"用户称呼[：:]\s*([^\n]+)"#
+        ]
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let nsRange = NSRange(memory.startIndex..<memory.endIndex, in: memory)
+            guard let match = regex.firstMatch(in: memory, range: nsRange),
+                  match.numberOfRanges > 1,
+                  let range = Range(match.range(at: 1), in: memory) else {
+                continue
+            }
+            let value = String(memory[range])
+                .trimmingCharacters(in: CharacterSet(charactersIn: "- ").union(.whitespacesAndNewlines))
+            if value.isEmpty == false {
+                return value
+            }
+        }
+
+        return preferredUserAddress
+    }
+
+    private func isCasualProbe(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard trimmed.isEmpty == false else { return false }
+
+        let explicitTaskSignals = [
+            "任务", "待办", "提醒我", "记一下", "记一个", "记个", "创建", "新建", "帮我记"
+        ]
+        if matchesAny(trimmed, keywords: explicitTaskSignals) {
+            return false
+        }
+
+        if matchesAny(trimmed, keywords: casualProbeHints.map { $0.lowercased() }) {
+            return true
+        }
+
+        let looksLikeTask = matchesAny(trimmed, keywords: [
+            "提醒我", "新建任务", "创建任务", "明天", "今天", "后天", "下周",
+            "完成", "移到", "放到", "列表", "清单", "回信", "整理", "报销"
+        ])
+        return looksLikeTask == false && trimmed.contains("测试")
+    }
+
+    private func detectSummaryRequest(
+        from text: String,
+        reminderLists: [ReminderListInfo],
+        reminderItems: [ReminderItemInfo],
+        preferredUserAddress: String
+    ) -> (
+        entities: [String: String],
+        reply: String,
+        summary: String,
+        confidence: Double,
+        followUpPrompt: String?,
+        signals: [String]
+    )? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else { return nil }
+
+        let openItems = reminderItems.filter { $0.isCompleted == false }
+        let calendar = Calendar.current
+        let summaryMode = detectSummaryMode(
+            from: trimmed,
+            reminderLists: reminderLists,
+            openItems: openItems,
+            calendar: calendar
+        )
+        guard let summaryMode else { return nil }
+
+        let filteredItems = summaryMode.items
+        let previewItems = filteredItems.prefix(3).map(\.title)
+        let reply = makeSummaryReply(
+            address: preferredUserAddress,
+            mode: summaryMode,
+            previewItems: previewItems,
+            reminderListCount: reminderLists.count,
+            openItemCount: openItems.count
+        )
+
+        return (
+            entities: [
+                "scope": summaryMode.scopeLabel,
+                "list_count": String(reminderLists.count),
+                "open_count": String(openItems.count),
+                "item_count": String(filteredItems.count),
+                "top_items": previewItems.joined(separator: "、"),
+                "target_list": summaryMode.targetListTitle ?? ""
+            ],
+            reply: reply,
+            summary: "我先替你看了一眼\(summaryMode.scopeLabel)的提醒事项",
+            confidence: summaryMode.confidence,
+            followUpPrompt: reminderLists.isEmpty ? "要不要我先帮你建一套起步分类？" : "你也可以直接说把其中一条完成、改时间，或者换到别的清单。",
+            signals: ["list_summary", summaryMode.scopeLabel]
         )
     }
 
@@ -231,7 +362,11 @@ struct MockAgentService {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.isEmpty == false else { return nil }
 
-        let creationKeywords = ["新建任务", "创建任务", "提醒我", "记得", "待办", "todo", "待办事项"]
+        let creationKeywords = [
+            "新建任务", "创建任务", "提醒我", "记得", "待办", "todo", "待办事项",
+            "记一个任务", "记个任务", "帮我记一个任务", "帮我记个任务",
+            "记一个待办", "记个待办", "帮我记一个待办", "帮我记个待办"
+        ]
         let hasCreationKeyword = matchesAny(trimmed.lowercased(), keywords: creationKeywords.map { $0.lowercased() })
         let hasFutureSignal = matchesAny(trimmed, keywords: ["明天", "今天", "今晚", "上午", "下午", "晚上", "后天", "下周", "周一", "周二", "周三", "周四", "周五", "周六", "周日", "周天"])
 
@@ -277,14 +412,14 @@ struct MockAgentService {
             "source_text": trimmed
         ]
 
-        let dueText = dueDateISO.isEmpty ? "稍后可再补时间" : "我会把时间一起带上"
+        let dueText = dueDateISO.isEmpty ? "时间还可以后面再补" : "时间我会一起带上"
         let listText = preferredList == nil ? "" : "，放进“\(preferredList!)”"
         return (
             entities: entities,
-            reply: "收到，我来帮你建这条提醒事项\(listText)。",
-            summary: "建议创建任务：\(title)",
+            reply: "记好了，\(preferredUserAddress)。这条我帮你建进提醒事项\(listText)。",
+            summary: "准备创建任务：\(title)",
             confidence: dueDateISO.isEmpty ? 0.76 : 0.88,
-            followUpPrompt: "如果你愿意，我也可以继续补充备注、时间或移动到别的清单。",
+            followUpPrompt: "如果你愿意，我也可以继续帮你补备注、改时间，或者换到别的清单。",
             signals: ["create_reminder", dueText]
         )
     }
@@ -492,6 +627,171 @@ struct MockAgentService {
             return explicit
         }
         return nil
+    }
+
+    private func normalize(_ text: String) -> String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private struct SummaryMode {
+        let scopeLabel: String
+        let targetListTitle: String?
+        let items: [ReminderItemInfo]
+        let confidence: Double
+    }
+
+    private func detectSummaryMode(
+        from text: String,
+        reminderLists: [ReminderListInfo],
+        openItems: [ReminderItemInfo],
+        calendar: Calendar
+    ) -> SummaryMode? {
+        let summaryKeywords = [
+            "看看", "看下", "看看我", "还有什么", "有哪些", "现在有什么", "当前有什么", "我有什么", "帮我看看"
+        ]
+        guard matchesAny(text, keywords: summaryKeywords) || containsAnyScopeKeyword(text) else {
+            return nil
+        }
+
+        if text.contains("今天") {
+            let items = openItems.filter { item in
+                guard let dueDate = item.dueDate else { return false }
+                return calendar.isDateInToday(dueDate)
+            }
+            return SummaryMode(scopeLabel: "今天", targetListTitle: nil, items: items, confidence: 0.88)
+        }
+
+        if text.contains("明天") {
+            let items = openItems.filter { item in
+                guard let dueDate = item.dueDate else { return false }
+                return calendar.isDateInTomorrow(dueDate)
+            }
+            return SummaryMode(scopeLabel: "明天", targetListTitle: nil, items: items, confidence: 0.88)
+        }
+
+        if let matched = matchSummaryListTitle(in: text, reminderLists: reminderLists) {
+            let items = openItems.filter { normalize($0.listTitle) == normalize(matched) }
+            return SummaryMode(scopeLabel: matched, targetListTitle: matched, items: items, confidence: 0.9)
+        }
+
+        if text.contains("等待中") || text.contains("等待") || text.contains("waiting") {
+            let items = openItems.filter { item in
+                let value = normalize(item.listTitle)
+                return value.contains("等待") || value.contains("wait")
+            }
+            return SummaryMode(scopeLabel: "等待中", targetListTitle: nil, items: items, confidence: 0.84)
+        }
+
+        if text.contains("项目") || text.contains("project") {
+            let items = openItems.filter { item in
+                let value = normalize(item.listTitle)
+                return value.contains("项目") || value.contains("project")
+            }
+            return SummaryMode(scopeLabel: "项目", targetListTitle: nil, items: items, confidence: 0.84)
+        }
+
+        if text.contains("收集箱") || text.contains("inbox") {
+            let items = openItems.filter { item in
+                let value = normalize(item.listTitle)
+                return value.contains("收集箱") || value.contains("inbox")
+            }
+            return SummaryMode(scopeLabel: "收集箱", targetListTitle: nil, items: items, confidence: 0.84)
+        }
+
+        if text.contains("也许") || text.contains("未来") || text.contains("maybe") {
+            let items = openItems.filter { item in
+                if let dueDate = item.dueDate {
+                    return calendar.isDateInTomorrow(dueDate) == false && calendar.isDateInToday(dueDate) == false
+                }
+                return true
+            }
+            return SummaryMode(scopeLabel: "未来", targetListTitle: nil, items: items, confidence: 0.8)
+        }
+
+        let currentItems = openItems
+        return SummaryMode(scopeLabel: "当前", targetListTitle: nil, items: currentItems, confidence: 0.82)
+    }
+
+    private func containsAnyScopeKeyword(_ text: String) -> Bool {
+        matchesAny(text, keywords: ["今天", "明天", "当前", "现在", "收集箱", "项目", "等待中", "等待", "未来", "也许", "inbox", "project", "waiting", "maybe"])
+    }
+
+    private func matchSummaryListTitle(in text: String, reminderLists: [ReminderListInfo]) -> String? {
+        let normalizedText = normalize(text)
+        let aliases: [(label: String, keywords: [String])] = [
+            ("收集箱", ["收集箱", "inbox"]),
+            ("下一步行动", ["下一步行动", "下一步", "next action", "next"]),
+            ("项目", ["项目", "project"]),
+            ("等待中", ["等待中", "等待", "waiting"]),
+            ("也许以后", ["也许以后", "也许", "maybe", "future"])
+        ]
+
+        for alias in aliases {
+            if alias.keywords.contains(where: { normalizedText.contains(normalize($0)) }) {
+                if let matchedList = reminderLists.first(where: { list in
+                    let normalizedList = normalize(list.title)
+                    return alias.keywords.contains(where: { normalizedList.contains(normalize($0)) })
+                }) {
+                    return matchedList.title
+                }
+                return alias.label
+            }
+        }
+
+        return explicitlyMentionedListName(in: text, reminderLists: reminderLists)
+    }
+
+    private func makeSummaryReply(
+        address: String,
+        mode: SummaryMode,
+        previewItems: [String],
+        reminderListCount: Int,
+        openItemCount: Int
+    ) -> String {
+        if reminderListCount == 0 {
+            return "\(address)，你现在还没有提醒事项清单。要的话我先帮你搭一套。"
+        }
+
+        if mode.items.isEmpty {
+            switch mode.scopeLabel {
+            case "今天":
+                return "\(address)，你今天暂时没有到期的提醒。"
+            case "明天":
+                return "\(address)，你明天暂时还没有安排。"
+            case "收集箱":
+                return "\(address)，收集箱里现在还空着。"
+            case "项目":
+                return "\(address)，项目这边我暂时没看到新的内容。"
+            case "等待中":
+                return "\(address)，等待中的事情现在还没有新的。"
+            case "也许以后", "未来":
+                return "\(address)，未来清单里现在暂时没有要补的。"
+            default:
+                return "\(address)，当前暂时没有新的提醒。"
+            }
+        }
+
+        let itemsText = previewItems.joined(separator: "、")
+        let suffix = mode.items.count > previewItems.count ? "，另外还有 \(mode.items.count - previewItems.count) 条" : ""
+
+        switch mode.scopeLabel {
+        case "今天":
+            return "\(address)，你今天主要还有：\(itemsText)\(suffix)。"
+        case "明天":
+            return "\(address)，你明天主要有：\(itemsText)\(suffix)。"
+        case "收集箱":
+            return "\(address)，收集箱里我先看到：\(itemsText)\(suffix)。"
+        case "项目":
+            return "\(address)，项目这边我先帮你看到了：\(itemsText)\(suffix)。"
+        case "等待中":
+            return "\(address)，等待中的事情主要有：\(itemsText)\(suffix)。"
+        case "也许以后", "未来":
+            return "\(address)，未来这边先看见：\(itemsText)\(suffix)。"
+        case "当前":
+            return "\(address)，你现在主要还有：\(itemsText)\(suffix)。"
+        default:
+            return "\(address)，\(mode.scopeLabel)主要有：\(itemsText)\(suffix)。"
+        }
     }
 
     private func firstMatch(in text: String, pattern: String) -> [String]? {

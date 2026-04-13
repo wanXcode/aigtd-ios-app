@@ -130,11 +130,11 @@ final class ModelProfile {
 
     init(
         id: UUID = UUID(),
-        displayName: String = "Default",
-        provider: String = "",
-        wireAPI: String = "chat_completions",
-        modelID: String = "",
-        baseURL: String = "",
+        displayName: String = "OpenAI",
+        provider: String = "OpenAI",
+        wireAPI: String = "responses",
+        modelID: String = "gpt-5.4",
+        baseURL: String = "https://api.5666.net",
         apiKeyReference: String = "",
         temperature: Double = 0.2,
         maxTokens: Int = 800,
@@ -189,6 +189,16 @@ final class UserPreference {
     var defaultReminderTime: String
     var preferredListMappingsJSON: String
     var stylePreferencesJSON: String
+    var voiceEnabled: Bool
+    var voiceProvider: String
+    var voiceBaseURL: String
+    var voiceAppKey: String
+    var voiceAPIKeyReference: String
+    var voiceModelID: String
+    var voiceCluster: String
+    var voiceLanguageCode: String
+    var voiceAutoSendTranscript: Bool
+    var voiceInterimResultsEnabled: Bool
 
     init(
         id: UUID = UUID(),
@@ -196,7 +206,17 @@ final class UserPreference {
         language: String = "zh-CN",
         defaultReminderTime: String = "09:00",
         preferredListMappingsJSON: String = "{}",
-        stylePreferencesJSON: String = "{}"
+        stylePreferencesJSON: String = "{}",
+        voiceEnabled: Bool = true,
+        voiceProvider: String = VoiceProviderPreset.doubao.rawValue,
+        voiceBaseURL: String = "wss://openspeech.bytedance.com/api/v2/asr",
+        voiceAppKey: String = "",
+        voiceAPIKeyReference: String = "",
+        voiceModelID: String = "volc.seedasr.sauc.duration",
+        voiceCluster: String = "volcengine_input_common",
+        voiceLanguageCode: String = "zh-CN",
+        voiceAutoSendTranscript: Bool = false,
+        voiceInterimResultsEnabled: Bool = true
     ) {
         self.id = id
         self.timeZone = timeZone
@@ -204,5 +224,15 @@ final class UserPreference {
         self.defaultReminderTime = defaultReminderTime
         self.preferredListMappingsJSON = preferredListMappingsJSON
         self.stylePreferencesJSON = stylePreferencesJSON
+        self.voiceEnabled = voiceEnabled
+        self.voiceProvider = voiceProvider
+        self.voiceBaseURL = voiceBaseURL
+        self.voiceAppKey = voiceAppKey
+        self.voiceAPIKeyReference = voiceAPIKeyReference
+        self.voiceModelID = voiceModelID
+        self.voiceCluster = voiceCluster
+        self.voiceLanguageCode = voiceLanguageCode
+        self.voiceAutoSendTranscript = voiceAutoSendTranscript
+        self.voiceInterimResultsEnabled = voiceInterimResultsEnabled
     }
 }

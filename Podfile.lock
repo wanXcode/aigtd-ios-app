@@ -1,0 +1,20 @@
+PODS:
+  - SpeechEngineAsrToB (1.1.7):
+    - TTNetworkManager (= 5.0.29.22)
+  - TTNetworkManager (5.0.29.22)
+
+DEPENDENCIES:
+  - SpeechEngineAsrToB (= 1.1.7)
+
+SPEC REPOS:
+  https://github.com/volcengine/volcengine-specs.git:
+    - SpeechEngineAsrToB
+    - TTNetworkManager
+
+SPEC CHECKSUMS:
+  SpeechEngineAsrToB: 3ff04aad018eb3e5ec14617f03b46f06fbcce6c6
+  TTNetworkManager: 47d93100d944e2ae807e035d8636df92fd5cc390
+
+PODFILE CHECKSUM: 998c556106ce63913ff9e188f0247932a271d497
+
+COCOAPODS: 1.16.2

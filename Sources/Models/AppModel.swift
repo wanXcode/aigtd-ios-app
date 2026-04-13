@@ -22,6 +22,7 @@ final class AppModel {
     var reminderListsErrorMessage = ""
     var isLoadingReminderLists = false
     var pendingReminderFocusIdentifier: String?
+    private var hasBootstrappedAfterLaunch = false
 
     var remindersAccessGranted: Bool {
         if #available(iOS 17.0, *) {
@@ -52,6 +53,12 @@ final class AppModel {
                 }
                 return lhs.listTitle.localizedCompare(rhs.listTitle) == .orderedAscending
             }
+    }
+
+    func bootstrapAfterLaunch() async {
+        guard hasBootstrappedAfterLaunch == false else { return }
+        hasBootstrappedAfterLaunch = true
+        await refreshReminderPermission()
     }
 
     func refreshReminderPermission() async {

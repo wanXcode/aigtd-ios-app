@@ -17,7 +17,11 @@ The current implementation is built around a simple principle:
 
 ## Version
 
-Current version: `0.1.0`
+Current version: `0.2.0`
+
+Latest release notes:
+
+- [v0.2.0](/Users/wan/wancode/todo/aigtd-ios-app/docs/releases/v0.2.0.md)
 
 ## What 0.1 includes
 
@@ -55,6 +59,11 @@ This project intentionally reuses stable ideas from [`gtd-tasks`](https://github
 
 The goal is to reuse proven rules and behavior where possible, while re-implementing the execution and UI layers in native iOS form.
 
+## Docs
+
+- [AIGTD interaction principles](/Users/wan/wancode/todo/aigtd-ios-app/docs/aigtd-interaction-principles.md)
+- [AIGTD conversation rules](/Users/wan/wancode/todo/aigtd-ios-app/docs/aigtd-conversation-rules.md)
+
 ## Project structure
 
 ```text
@@ -67,6 +76,7 @@ Sources/
     Reminders/
   Models/
   Services/
+docs/
 project.yml
 ```
 
@@ -96,7 +106,6 @@ xcodebuild -project AIGTDReminders.xcodeproj \
 ## Current limitations
 
 - no multi-turn task disambiguation UI yet
-- no agent document editor for `Prompt / Memory / Solu` yet
 - rule coverage is still being expanded to match more of `gtd-tasks`
 
 ## Changelog

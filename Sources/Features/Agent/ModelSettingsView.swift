@@ -6,20 +6,32 @@ struct ModelSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \ModelProfile.displayName) private var profiles: [ModelProfile]
+    @Query private var preferences: [UserPreference]
 
     @State private var isTestingConnection = false
     @State private var testStatusMessage = ""
     @State private var testStatusTone: TestStatusTone = .idle
 
-    @State private var displayName = "默认模型"
+    @State private var displayName = "OpenAI"
     @State private var provider = "OpenAI"
-    @State private var wireAPI = WireAPIPreset.chatCompletions.rawValue
-    @State private var modelID = ""
-    @State private var baseURL = ""
+    @State private var wireAPI = WireAPIPreset.responses.rawValue
+    @State private var modelID = "gpt-5.4"
+    @State private var baseURL = "https://api.5666.net"
     @State private var apiKey = ""
     @State private var temperature = 0.2
     @State private var maxTokens = 800
     @State private var timeoutSeconds = 30.0
+
+    @State private var voiceEnabled = false
+    @State private var voiceProvider = VoiceProviderPreset.doubao.rawValue
+    @State private var voiceBaseURL = ""
+    @State private var voiceAppKey = ""
+    @State private var voiceAPIKey = ""
+    @State private var voiceModelID = "volc.seedasr.sauc.duration"
+    @State private var voiceCluster = "volcengine_input_common"
+    @State private var voiceLanguageCode = "zh-CN"
+    @State private var voiceAutoSendTranscript = false
+    @State private var voiceInterimResultsEnabled = true
 
     private let runtime = AgentRuntimeService()
 
@@ -37,6 +49,7 @@ struct ModelSettingsView: View {
                     Text("还没有模型配置。")
                         .foregroundStyle(.secondary)
                 }
+
             }
 
             Section("编辑配置") {
@@ -74,6 +87,40 @@ struct ModelSettingsView: View {
                 Stepper("超时: \(Int(timeoutSeconds)) 秒", value: $timeoutSeconds, in: 5...120, step: 5)
 
                 Text(endpointHelpText)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("语音识别") {
+                Toggle("启用语音识别", isOn: $voiceEnabled)
+                Picker("语音 Provider", selection: $voiceProvider) {
+                    ForEach(VoiceProviderPreset.allCases) { preset in
+                        Text(preset.label).tag(preset.rawValue)
+                    }
+                }
+                SecureField("语音 App Key", text: $voiceAppKey)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                SecureField("语音 Access Key", text: $voiceAPIKey)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                TextField("语音 Resource ID", text: $voiceModelID)
+                TextField("语音 Cluster", text: $voiceCluster)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                if selectedVoiceProviderPreset == .custom {
+                    TextField("语音 WebSocket URL", text: $voiceBaseURL)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                } else {
+                    LabeledContent("语音 WebSocket URL", value: "默认 `wss://openspeech.bytedance.com/api/v2/asr`")
+                }
+                TextField("语言代码", text: $voiceLanguageCode)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                Toggle("识别后自动发送", isOn: $voiceAutoSendTranscript)
+                Toggle("显示中间结果", isOn: $voiceInterimResultsEnabled)
+                Text("语音输入走火山官方 WebSocket 协议 `/api/v2/asr`。请填写 App Key、Access Key、Resource ID、Cluster；目标是边说边出字，结束后再做一轮最终修正。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -132,7 +179,9 @@ struct ModelSettingsView: View {
         }
         .navigationTitle("模型设置")
         .onAppear {
+            ensureVoicePreference()
             loadFromActiveProfile()
+            loadVoiceFromPreference()
         }
         .onChange(of: provider) { _, newValue in
             guard let preset = ModelProviderPreset(rawValue: newValue) else { return }
@@ -140,10 +189,25 @@ struct ModelSettingsView: View {
                 baseURL = ""
             }
         }
+        .onChange(of: voiceProvider) { _, newValue in
+            if VoiceProviderPreset(rawValue: newValue) == .doubao {
+                voiceBaseURL = ""
+            }
+        }
     }
 
     private var activeProfile: ModelProfile? {
         profiles.first(where: \.isActive)
+    }
+
+    private var activePreference: UserPreference? {
+        preferences.first
+    }
+
+    private func ensureVoicePreference() {
+        guard preferences.isEmpty else { return }
+        modelContext.insert(UserPreference())
+        try? modelContext.save()
     }
 
     private func loadFromActiveProfile() {
@@ -157,6 +221,20 @@ struct ModelSettingsView: View {
         temperature = activeProfile.temperature
         maxTokens = activeProfile.maxTokens
         timeoutSeconds = activeProfile.timeoutSeconds
+    }
+
+    private func loadVoiceFromPreference() {
+        guard let preference = activePreference else { return }
+        voiceEnabled = preference.voiceEnabled
+        voiceProvider = preference.voiceProvider.isEmpty ? VoiceProviderPreset.doubao.rawValue : preference.voiceProvider
+        voiceBaseURL = preference.voiceBaseURL
+        voiceAppKey = preference.voiceAppKey
+        voiceAPIKey = preference.voiceAPIKeyReference
+        voiceModelID = preference.voiceModelID
+        voiceCluster = preference.voiceCluster
+        voiceLanguageCode = preference.voiceLanguageCode.isEmpty ? "zh-CN" : preference.voiceLanguageCode
+        voiceAutoSendTranscript = preference.voiceAutoSendTranscript
+        voiceInterimResultsEnabled = preference.voiceInterimResultsEnabled
     }
 
     private func saveProfile() {
@@ -200,6 +278,8 @@ struct ModelSettingsView: View {
             modelContext.insert(profile)
         }
 
+        syncVoicePreference()
+
         do {
             try modelContext.save()
             if appModel.pendingChatDraftAfterModelSetup.isEmpty {
@@ -219,6 +299,10 @@ struct ModelSettingsView: View {
 
     private var selectedProviderPreset: ModelProviderPreset {
         ModelProviderPreset(rawValue: provider) ?? .openAI
+    }
+
+    private var selectedVoiceProviderPreset: VoiceProviderPreset {
+        VoiceProviderPreset(rawValue: voiceProvider) ?? .doubao
     }
 
     private var connectionConfiguration: AgentModelConfiguration? {
@@ -353,6 +437,33 @@ struct ModelSettingsView: View {
 
         return String(describing: error)
     }
+
+    private func syncVoicePreference() {
+        let trimmedProvider = voiceProvider.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedBaseURL = voiceBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedAppKey = voiceAppKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedAPIKey = voiceAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedModelID = voiceModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedCluster = voiceCluster.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedLanguageCode = voiceLanguageCode.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let preference = activePreference ?? {
+            let created = UserPreference()
+            modelContext.insert(created)
+            return created
+        }()
+
+        preference.voiceEnabled = voiceEnabled
+        preference.voiceProvider = trimmedProvider.isEmpty ? VoiceProviderPreset.doubao.rawValue : trimmedProvider
+        preference.voiceBaseURL = selectedVoiceProviderPreset == .doubao ? "" : trimmedBaseURL
+        preference.voiceAppKey = trimmedAppKey
+        preference.voiceAPIKeyReference = trimmedAPIKey
+        preference.voiceModelID = trimmedModelID
+        preference.voiceCluster = trimmedCluster
+        preference.voiceLanguageCode = trimmedLanguageCode.isEmpty ? "zh-CN" : trimmedLanguageCode
+        preference.voiceAutoSendTranscript = voiceAutoSendTranscript
+        preference.voiceInterimResultsEnabled = voiceInterimResultsEnabled
+    }
 }
 
 #Preview {
@@ -360,7 +471,7 @@ struct ModelSettingsView: View {
         ModelSettingsView()
     }
     .environment(AppModel.previewFinished)
-    .modelContainer(for: ModelProfile.self, inMemory: true)
+    .modelContainer(for: [ModelProfile.self, UserPreference.self], inMemory: true)
 }
 
 private enum TestStatusTone {

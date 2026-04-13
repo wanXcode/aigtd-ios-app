@@ -13,7 +13,9 @@ struct RootView: View {
         }
         .preferredColorScheme(.light)
         .task {
-            await appModel.refreshReminderPermission()
+            AIGTDRemindersApp.mark("root_view_task_begin")
+            await appModel.bootstrapAfterLaunch()
+            AIGTDRemindersApp.mark("root_view_task_end")
         }
     }
 }
