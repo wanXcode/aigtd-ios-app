@@ -1,11 +1,13 @@
+import SwiftData
 import SwiftUI
 
 struct RootView: View {
     @Environment(AppModel.self) private var appModel
+    @Query(sort: \ChatSession.updatedAt, order: .reverse) private var sessions: [ChatSession]
 
     var body: some View {
         Group {
-            if appModel.onboardingState.isFinished {
+            if appModel.onboardingState.isFinished || sessions.isEmpty == false {
                 MainTabView()
             } else {
                 OnboardingRootView()

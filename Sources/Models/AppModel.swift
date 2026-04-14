@@ -11,7 +11,12 @@ enum AppTab: Hashable {
 @MainActor
 @Observable
 final class AppModel {
-    var onboardingState = OnboardingState()
+    private static let onboardingStateStorageKey = "aigtd.onboarding.state.v1"
+    var onboardingState = AppModel.loadOnboardingState() {
+        didSet {
+            persistOnboardingState()
+        }
+    }
     var selectedTab: AppTab = .chat
     var pendingChatDraftAfterModelSetup = ""
     var shouldResumeChatComposer = false
@@ -175,6 +180,20 @@ final class AppModel {
         onboardingState.hasEnteredChat = true
     }
 
+    private static func loadOnboardingState() -> OnboardingState {
+        let defaults = UserDefaults.standard
+        guard let data = defaults.data(forKey: onboardingStateStorageKey),
+              let state = try? JSONDecoder().decode(OnboardingState.self, from: data) else {
+            return OnboardingState()
+        }
+        return state
+    }
+
+    private func persistOnboardingState() {
+        guard let data = try? JSONEncoder().encode(onboardingState) else { return }
+        UserDefaults.standard.set(data, forKey: Self.onboardingStateStorageKey)
+    }
+
     private func reminderItemSort(lhs: ReminderItemInfo, rhs: ReminderItemInfo) -> Bool {
         switch (lhs.isCompleted, rhs.isCompleted) {
         case (false, true):
@@ -217,7 +236,7 @@ extension AppModel {
     }
 }
 
-struct OnboardingState {
+struct OnboardingState: Codable {
     var hasSeenWelcome = false
     var hasRequestedReminderPermission = false
     var hasConfiguredModel = false

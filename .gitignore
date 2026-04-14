@@ -3,3 +3,4 @@ xcuserdata/
 DerivedData/
 *.xcuserstate
 Pods/
+Resources/Secrets.local.plist
