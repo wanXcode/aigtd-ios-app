@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+Current development changes after `0.2.0`.
+
+### Added
+
+- redesigned the in-app Reminders browser with system-list ordering, empty-list visibility, latest-sync status, and direct completion / deletion actions
+- added reminder browser states for permission missing, sync failure, empty store, and no remaining active tasks
+
+### Improved
+
+- improved Reminders tab consistency with Apple Reminders by preserving the system list order instead of re-sorting list titles in app code
+- updated microphone permission handling for newer iOS APIs in Agent settings
+- aligned remote streaming text callbacks with `@MainActor` expectations to keep chat reply rendering safer on the UI thread
+- improved voice session lifecycle handling when the Doubao ASR engine is not fully ready or disconnects during finalize
+- kept reminder sync state metadata (`lastReminderSyncAt`) so the UI can show the latest refresh time more clearly
+
+### Fixed
+
+- fixed Reminders sections disappearing when a list had no active tasks
+- fixed stale reminder data remaining visible after reminders permission was revoked
+- fixed speech session user ID generation to avoid depending on `identifierForVendor`
+
 ## 0.2.0
 
 Second development release focused on remote-agent stability and chat input experience.
