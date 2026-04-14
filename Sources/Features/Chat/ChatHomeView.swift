@@ -348,14 +348,12 @@ struct ChatHomeView: View {
             configuration: activeModelConfiguration,
             agentContext: runtimeContext,
             onTextUpdate: { partialText in
-                await MainActor.run {
-                    if partialText.isEmpty == false {
-                        isStreamingReply = true
-                    }
-                    assistantMessage.text = partialText
-                    assistantMessage.status = "streaming"
-                    try? modelContext.save()
+                if partialText.isEmpty == false {
+                    isStreamingReply = true
                 }
+                assistantMessage.text = partialText
+                assistantMessage.status = "streaming"
+                try? modelContext.save()
             }
         )
         let executionResult = resolveExecutionResult(

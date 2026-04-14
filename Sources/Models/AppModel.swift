@@ -26,6 +26,7 @@ final class AppModel {
     var reminderItems: [ReminderItemInfo] = []
     var reminderListsErrorMessage = ""
     var isLoadingReminderLists = false
+    var lastReminderSyncAt: Date?
     var pendingReminderFocusIdentifier: String?
     private var hasBootstrappedAfterLaunch = false
 
@@ -68,9 +69,17 @@ final class AppModel {
 
     func refreshReminderPermission() async {
         reminderPermissionStatus = EKEventStore.authorizationStatus(for: .reminder)
-        if remindersAccessGranted {
-            await refreshReminderLists()
+        guard remindersAccessGranted else {
+            reminderLists = []
+            reminderItems = []
+            reminderListsErrorMessage = ""
+            isLoadingReminderLists = false
+            lastReminderSyncAt = nil
+            pendingReminderFocusIdentifier = nil
+            return
         }
+
+        await refreshReminderLists()
     }
 
     func requestReminderPermission() async {
@@ -87,6 +96,7 @@ final class AppModel {
             reminderLists = []
             reminderItems = []
             reminderListsErrorMessage = ""
+            lastReminderSyncAt = nil
             return
         }
 
@@ -97,6 +107,7 @@ final class AppModel {
             reminderLists = try ReminderStoreService().fetchReminderLists()
             reminderItems = try await ReminderStoreService().fetchReminderItems()
             reminderListsErrorMessage = ""
+            lastReminderSyncAt = .now
         } catch {
             reminderLists = []
             reminderItems = []
@@ -113,6 +124,7 @@ final class AppModel {
             reminderLists = try ReminderStoreService().createLists(named: starterLists)
             reminderItems = try await ReminderStoreService().fetchReminderItems()
             reminderListsErrorMessage = ""
+            lastReminderSyncAt = .now
             return true
         } catch {
             reminderListsErrorMessage = error.localizedDescription
@@ -139,6 +151,37 @@ final class AppModel {
             reminderLists = try ReminderStoreService().createLists(named: [listName])
             reminderItems = try await ReminderStoreService().fetchReminderItems()
             reminderListsErrorMessage = ""
+            lastReminderSyncAt = .now
+            return true
+        } catch {
+            reminderListsErrorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    func setReminderCompletion(identifier: String, isCompleted: Bool) async -> Bool {
+        guard remindersAccessGranted else { return false }
+
+        do {
+            _ = try ReminderStoreService().updateReminderCompletion(identifier: identifier, isCompleted: isCompleted)
+            reminderItems = try await ReminderStoreService().fetchReminderItems()
+            reminderListsErrorMessage = ""
+            lastReminderSyncAt = .now
+            return true
+        } catch {
+            reminderListsErrorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    func deleteReminder(identifier: String) async -> Bool {
+        guard remindersAccessGranted else { return false }
+
+        do {
+            _ = try ReminderStoreService().deleteReminder(identifier: identifier)
+            reminderItems = try await ReminderStoreService().fetchReminderItems()
+            reminderListsErrorMessage = ""
+            lastReminderSyncAt = .now
             return true
         } catch {
             reminderListsErrorMessage = error.localizedDescription
@@ -225,12 +268,16 @@ extension AppModel {
         model.onboardingState.hasEnteredChat = true
         model.reminderLists = [
             ReminderListInfo(id: "1", title: "收集箱"),
-            ReminderListInfo(id: "2", title: "项目")
+            ReminderListInfo(id: "2", title: "项目"),
+            ReminderListInfo(id: "3", title: "下一步行动")
         ]
         model.reminderItems = [
-            ReminderItemInfo(id: "r1", title: "给张闯回信", notes: "等他确认报价", dueDate: .now, listTitle: "收集箱", isCompleted: false),
-            ReminderItemInfo(id: "r2", title: "整理报销", notes: "", dueDate: nil, listTitle: "项目", isCompleted: false)
+            ReminderItemInfo(id: "r1", title: "跟进合作邮件", notes: "确认本周是否推进", dueDate: .now, listTitle: "收集箱", isCompleted: false),
+            ReminderItemInfo(id: "r2", title: "整理报销材料", notes: "", dueDate: nil, listTitle: "项目", isCompleted: false),
+            ReminderItemInfo(id: "r3", title: "检查演示版本", notes: "", dueDate: .now.addingTimeInterval(-86_400), listTitle: "下一步行动", isCompleted: false),
+            ReminderItemInfo(id: "r4", title: "归档旧记录", notes: "", dueDate: nil, listTitle: "收集箱", isCompleted: true)
         ]
+        model.lastReminderSyncAt = .now
         model.pendingReminderFocusIdentifier = nil
         return model
     }

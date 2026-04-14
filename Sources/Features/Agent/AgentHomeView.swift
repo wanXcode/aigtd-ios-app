@@ -11,7 +11,7 @@ struct AgentHomeView: View {
     @Query(sort: \AgentDocument.updatedAt, order: .forward) private var documents: [AgentDocument]
     @State private var showsModelSettings = false
     @State private var selectedDocumentID: UUID?
-    @State private var microphonePermission: AVAudioSession.RecordPermission = AVAudioSession.sharedInstance().recordPermission
+    @State private var microphonePermission = AVAudioApplication.shared.recordPermission
 
     var body: some View {
         List {
@@ -237,16 +237,16 @@ struct AgentHomeView: View {
     }
 
     private func refreshPermissionStatus() {
-        microphonePermission = AVAudioSession.sharedInstance().recordPermission
+        microphonePermission = AVAudioApplication.shared.recordPermission
         Task {
             await appModel.refreshReminderPermission()
         }
     }
 
     private func requestMicrophonePermission() {
-        AVAudioSession.sharedInstance().requestRecordPermission { _ in
+        AVAudioApplication.requestRecordPermission { _ in
             DispatchQueue.main.async {
-                self.microphonePermission = AVAudioSession.sharedInstance().recordPermission
+                self.microphonePermission = AVAudioApplication.shared.recordPermission
             }
         }
     }

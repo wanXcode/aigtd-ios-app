@@ -1,2 +1,2 @@
-#import <SpeechEngineAsrToB/SpeechEngineDefines.h>
-#import <SpeechEngineAsrToB/SpeechEngine.h>
+#import "SpeechEngineDefines.h"
+#import "SpeechEngine.h"

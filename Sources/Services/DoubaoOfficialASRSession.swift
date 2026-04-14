@@ -1,5 +1,4 @@
 import Foundation
-import UIKit
 
 final class DoubaoOfficialASRSession: NSObject, SpeechEngineDelegate, @unchecked Sendable {
     private let defaultEndpoint = "wss://openspeech.bytedance.com"
@@ -104,12 +103,12 @@ final class DoubaoOfficialASRSession: NSObject, SpeechEngineDelegate, @unchecked
     func finish() async throws -> VoiceTranscriptionResult {
         let snapshot = stateQueue.sync {
             (
-                engine: hasStartedEngine ? self.engine : nil,
+                engineReady: hasStartedEngine && self.engine != nil,
                 lastMessage: lastEngineMessage,
                 rawSummary: rawEvents.suffix(8).joined(separator: "\n")
             )
         }
-        guard let engine = snapshot.engine else {
+        guard snapshot.engineReady else {
             let message = formatSDKErrorMessage(
                 primary: snapshot.lastMessage,
                 fallback: "语音引擎还没准备好，哥哥你再试一下。",
@@ -152,8 +151,15 @@ final class DoubaoOfficialASRSession: NSObject, SpeechEngineDelegate, @unchecked
                 }
                 self.finishTimeoutWorkItem = timeoutWorkItem
                 self.stateQueue.asyncAfter(deadline: .now() + 1.5, execute: timeoutWorkItem)
-                let ret: SEEngineErrorCode = self.engineQueue.sync {
-                    engine.send(SEDirectiveFinishTalking, data: "")
+                let ret: SEEngineErrorCode? = self.engineQueue.sync {
+                    self.engine?.send(SEDirectiveFinishTalking, data: "")
+                }
+                guard let ret else {
+                    self.finishLocked(
+                        result: nil,
+                        error: VoiceTranscriptionError.connectionFailed("语音引擎已断开，哥哥你再试一下。")
+                    )
+                    return
                 }
                 guard ret == SENoError else {
                     self.finishLocked(
@@ -284,11 +290,6 @@ final class DoubaoOfficialASRSession: NSObject, SpeechEngineDelegate, @unchecked
     }
 
     private func resolveStableUserID() -> String {
-        if let vendorID = UIDevice.current.identifierForVendor?.uuidString,
-           vendorID.isEmpty == false {
-            return vendorID
-        }
-
         let key = "ai.gtd.voice.user-id"
         if let existing = UserDefaults.standard.string(forKey: key),
            existing.isEmpty == false {

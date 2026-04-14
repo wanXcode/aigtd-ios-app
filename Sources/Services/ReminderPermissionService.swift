@@ -95,7 +95,6 @@ struct ReminderStoreService {
         store.refreshSourcesIfNecessary()
         return store.calendars(for: .reminder)
             .map { ReminderListInfo(id: $0.calendarIdentifier, title: $0.title) }
-            .sorted { $0.title.localizedCompare($1.title) == .orderedAscending }
     }
 
     func fetchReminderItems(limit: Int = 50) async throws -> [ReminderItemInfo] {
@@ -236,6 +235,34 @@ struct ReminderStoreService {
         reminder.completionDate = Date()
         try store.save(reminder, commit: true)
         return reminder.calendarItemIdentifier
+    }
+
+    @discardableResult
+    func updateReminderCompletion(identifier: String, isCompleted: Bool) throws -> String {
+        let store = try authorizedStore()
+        store.refreshSourcesIfNecessary()
+
+        guard let reminder = store.calendarItem(withIdentifier: identifier) as? EKReminder else {
+            throw ReminderStoreError.reminderNotFound(identifier)
+        }
+
+        reminder.isCompleted = isCompleted
+        reminder.completionDate = isCompleted ? Date() : nil
+        try store.save(reminder, commit: true)
+        return reminder.calendarItemIdentifier
+    }
+
+    @discardableResult
+    func deleteReminder(identifier: String) throws -> String {
+        let store = try authorizedStore()
+        store.refreshSourcesIfNecessary()
+
+        guard let reminder = store.calendarItem(withIdentifier: identifier) as? EKReminder else {
+            throw ReminderStoreError.reminderNotFound(identifier)
+        }
+
+        try store.remove(reminder, commit: true)
+        return identifier
     }
 
     private func normalize(_ text: String) -> String {

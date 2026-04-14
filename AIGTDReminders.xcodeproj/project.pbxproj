@@ -49,7 +49,7 @@
 		5BD5CC43506B2F329746582C /* PersistenceModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistenceModels.swift; sourceTree = "<group>"; };
 		5D27225CE6A7CB835CD74227 /* Pods_AIGTDReminders.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_AIGTDReminders.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		7D792DDE49370EE7C7CAE3A3 /* ChatHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatHomeView.swift; sourceTree = "<group>"; };
-		802BD0311C392351E4A189C2 /* AIGTDReminders.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = AIGTDReminders.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		802BD0311C392351E4A189C2 /* AIGTD Reminders.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "AIGTD Reminders.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		87480D675543CCDECFB891CB /* OnboardingRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingRootView.swift; sourceTree = "<group>"; };
 		9A3ED8B29E2AE5B2F628C7A8 /* DoubaoOfficialASRSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoubaoOfficialASRSession.swift; sourceTree = "<group>"; };
 		9E7FC6AD668F4F54377E08C3 /* VoiceTranscriptionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceTranscriptionService.swift; sourceTree = "<group>"; };
@@ -63,7 +63,7 @@
 		D27D2ECD6E652D41FCEB4CA4 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
 		D789456E5B31AAC10A893EA2 /* Pods-AIGTDReminders.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-AIGTDReminders.release.xcconfig"; path = "Target Support Files/Pods-AIGTDReminders/Pods-AIGTDReminders.release.xcconfig"; sourceTree = "<group>"; };
 		DD422EEC423D82DCE927DF7B /* Secrets.local.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Secrets.local.plist; sourceTree = "<group>"; };
-		E0CC7F983D8C8EA3EBB59ABE /* Secrets.local.plist.example */ = {isa = PBXFileReference; path = Secrets.local.plist.example; sourceTree = "<group>"; };
+		E0CC7F983D8C8EA3EBB59ABE /* Secrets.local.plist.example */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = Secrets.local.plist.example; sourceTree = "<group>"; };
 		E740D7B5BEEB15C46306EB1E /* Pods-AIGTDReminders.release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "Pods-AIGTDReminders.release.xcconfig"; sourceTree = "<group>"; };
 		EB48FD4A6260EAA256240488 /* Pods-AIGTDReminders.debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "Pods-AIGTDReminders.debug.xcconfig"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -129,7 +129,7 @@
 		22E507A2BE1C23BDB7861D40 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				802BD0311C392351E4A189C2 /* AIGTDReminders.app */,
+				802BD0311C392351E4A189C2 /* AIGTD Reminders.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -210,7 +210,6 @@
 				2F07A9560969761CB9268C24 /* Pods-AIGTDReminders.debug.xcconfig */,
 				D789456E5B31AAC10A893EA2 /* Pods-AIGTDReminders.release.xcconfig */,
 			);
-			name = Pods;
 			path = Pods;
 			sourceTree = "<group>";
 		};
@@ -249,7 +248,7 @@
 			);
 			name = AIGTDReminders;
 			productName = AIGTDReminders;
-			productReference = 802BD0311C392351E4A189C2 /* AIGTDReminders.app */;
+			productReference = 802BD0311C392351E4A189C2 /* AIGTD Reminders.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -259,9 +258,7 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
-				LastUpgradeCheck = 1430;
-				TargetAttributes = {
-				};
+				LastUpgradeCheck = 2630;
 			};
 			buildConfigurationList = 895734504410A17C34C27305 /* Build configuration list for PBXProject "AIGTDReminders" */;
 			developmentRegion = en;
@@ -328,9 +325,13 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-AIGTDReminders/Pods-AIGTDReminders-frameworks-${CONFIGURATION}-input-files.xcfilelist",
 			);
+			inputPaths = (
+			);
 			name = "[CP] Embed Pods Frameworks";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-AIGTDReminders/Pods-AIGTDReminders-frameworks-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -386,6 +387,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
@@ -418,8 +420,10 @@
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 2;
 				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 85T4PAN9HD;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_NO_COMMON_BLOCKS = YES;
@@ -441,6 +445,7 @@
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_NAME = "AIGTD Reminders";
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 6.0;
@@ -453,6 +458,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = 85T4PAN9HD;
 				GENERATE_INFOPLIST_FILE = YES;
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
@@ -468,6 +474,7 @@
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UIRequiresFullScreen = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = com.wan.todo.aigtdreminders;
 				SDKROOT = iphoneos;
 				SWIFT_OBJC_BRIDGING_HEADER = "Sources/Support/AIGTDReminders-Bridging-Header.h";
@@ -481,6 +488,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = 85T4PAN9HD;
 				GENERATE_INFOPLIST_FILE = YES;
 				HEADER_SEARCH_PATHS = (
 					"$(inherited)",
@@ -496,6 +504,7 @@
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UIRequiresFullScreen = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = com.wan.todo.aigtdreminders;
 				SDKROOT = iphoneos;
 				SWIFT_OBJC_BRIDGING_HEADER = "Sources/Support/AIGTDReminders-Bridging-Header.h";
@@ -507,6 +516,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
 				CLANG_ANALYZER_NONNULL = YES;
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
@@ -539,8 +549,10 @@
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 2;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 85T4PAN9HD;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
@@ -555,6 +567,7 @@
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "AIGTD Reminders";
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 6.0;

@@ -18,7 +18,7 @@ struct AgentRuntimeService {
         reminderItems: [ReminderItemInfo],
         configuration: AgentModelConfiguration?,
         agentContext: AIGTDAgentRuntimeContext? = nil,
-        onTextUpdate: (@Sendable (String) async -> Void)? = nil
+        onTextUpdate: (@MainActor @Sendable (String) async -> Void)? = nil
     ) async -> MockAgentResult {
         guard let configuration,
               configuration.provider.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
@@ -102,7 +102,7 @@ struct AgentRuntimeService {
         reminderItems: [ReminderItemInfo],
         configuration: AgentModelConfiguration,
         agentContext: AIGTDAgentRuntimeContext?,
-        onTextUpdate: (@Sendable (String) async -> Void)?
+        onTextUpdate: (@MainActor @Sendable (String) async -> Void)?
     ) async throws -> MockAgentResult {
         if normalizedWireAPI(from: configuration) == .responses {
             return try await requestRemoteStreamingResponse(
@@ -176,7 +176,7 @@ struct AgentRuntimeService {
         reminderItems: [ReminderItemInfo],
         configuration: AgentModelConfiguration,
         agentContext: AIGTDAgentRuntimeContext?,
-        onTextUpdate: (@Sendable (String) async -> Void)?
+        onTextUpdate: (@MainActor @Sendable (String) async -> Void)?
     ) async throws -> MockAgentResult {
         let endpoint = normalizedEndpoint(from: configuration)
         let request = try makeRequest(
