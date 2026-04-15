@@ -203,6 +203,7 @@ struct AgentRuntimeService {
         var currentEvent = "message"
         var currentDataLines: [String] = []
         var latestResolvedText = ""
+        var latestVisibleStreamingText = ""
         var lastPayloadSummary = ""
 
         func consumeCurrentEvent() async {
@@ -216,8 +217,10 @@ struct AgentRuntimeService {
                extracted != latestResolvedText {
                 latestResolvedText = extracted
                 if let onTextUpdate,
-                   makeStructuredResult(from: latestResolvedText) == nil {
-                    await onTextUpdate(latestResolvedText)
+                   let visibleText = visibleStreamingText(from: latestResolvedText),
+                   visibleText != latestVisibleStreamingText {
+                    latestVisibleStreamingText = visibleText
+                    await onTextUpdate(visibleText)
                 }
             }
             currentEvent = "message"
@@ -618,6 +621,52 @@ struct AgentRuntimeService {
         }
 
         return nil
+    }
+
+    private func visibleStreamingText(from rawText: String) -> String? {
+        let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else { return nil }
+
+        if let envelope = parseRemoteAgentEnvelope(from: trimmed) {
+            return envelope.replyText
+        }
+
+        if let reply = firstJSONStringValue(forKey: "reply", in: trimmed)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           reply.isEmpty == false {
+            return reply
+        }
+
+        if looksLikeStructuredEnvelopeFragment(trimmed) {
+            return nil
+        }
+
+        return trimmed
+    }
+
+    private func looksLikeStructuredEnvelopeFragment(_ rawText: String) -> Bool {
+        let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else { return false }
+
+        if trimmed.hasPrefix("{") ||
+            trimmed.hasPrefix("[{") ||
+            trimmed.hasPrefix("```json") ||
+            trimmed.hasPrefix("```JSON") {
+            return true
+        }
+
+        let lowered = trimmed.lowercased()
+        let structuredKeys = [
+            "\"reply\"",
+            "\"summary\"",
+            "\"followupprompt\"",
+            "\"matchedsignals\"",
+            "\"action\"",
+            "\"intent\"",
+            "\"entities\""
+        ]
+
+        return structuredKeys.contains { lowered.contains($0) }
     }
 
     private func extractReadableTextFromSSEPayload(_ raw: String, eventName: String, currentText: String = "") -> String? {
