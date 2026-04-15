@@ -2135,7 +2135,6 @@ private struct ChatComposer: View {
                     // Keep keyboard alive during voice input. Making UITextView non-editable
                     // causes iOS to resign first responder and collapse the keyboard.
                     isEditable: true,
-                    onSubmit: onSend,
                     isVoiceInputActive: isVoicePrimed || isRecordingVoice || isTranscribingVoice,
                     onVoiceInputTakeoverByKeyboard: onVoiceInputTakeoverByKeyboard
                 )
@@ -2159,13 +2158,10 @@ private struct ChatComposer: View {
             )
             .contentShape(Rectangle())
 
-            VoiceToggleButton(
-                isVoicePrimed: isVoicePrimed,
-                isRecordingVoice: isRecordingVoice,
-                isTranscribingVoice: isTranscribingVoice,
-                isFinalizingVoice: isFinalizingVoice,
-                isDisabled: isSending || isFinalizingVoice,
-                onTap: onToggleVoice
+            ComposerAccessoryButton(
+                mode: accessoryMode,
+                isDisabled: accessoryButtonDisabled,
+                onTap: accessoryButtonAction
             )
             .frame(width: 44, height: 44)
         }
@@ -2201,6 +2197,42 @@ private struct ChatComposer: View {
     private var shouldAnimateComposerHeight: Bool {
         !(isVoicePrimed || isRecordingVoice || isTranscribingVoice || isFinalizingVoice)
     }
+
+    private var trimmedDraft: String {
+        draft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var isVoiceControlActive: Bool {
+        isVoicePrimed || isRecordingVoice || isTranscribingVoice || isFinalizingVoice
+    }
+
+    private var accessoryMode: ComposerAccessoryButton.Mode {
+        if isVoiceControlActive {
+            return .stop
+        }
+        if trimmedDraft.isEmpty == false {
+            return .send
+        }
+        return .voice
+    }
+
+    private var accessoryButtonDisabled: Bool {
+        switch accessoryMode {
+        case .send:
+            return isSending || isStreamingReply
+        case .voice, .stop:
+            return isSending || isFinalizingVoice
+        }
+    }
+
+    private var accessoryButtonAction: () -> Void {
+        switch accessoryMode {
+        case .send:
+            return onSend
+        case .voice, .stop:
+            return onToggleVoice
+        }
+    }
 }
 
 private struct GrowingComposerTextView: UIViewRepresentable {
@@ -2214,7 +2246,6 @@ private struct GrowingComposerTextView: UIViewRepresentable {
     let textContainerInset: UIEdgeInsets
     let shouldHideCaret: Bool
     let isEditable: Bool
-    let onSubmit: () -> Void
     let isVoiceInputActive: Bool
     let onVoiceInputTakeoverByKeyboard: () -> Void
 
@@ -2235,7 +2266,6 @@ private struct GrowingComposerTextView: UIViewRepresentable {
             isFocused: $isFocused,
             minHeight: minHeight,
             maxHeight: maxHeight,
-            onSubmit: onSubmit,
             onVoiceInputTakeoverByKeyboard: onVoiceInputTakeoverByKeyboard
         )
     }
@@ -2247,7 +2277,7 @@ private struct GrowingComposerTextView: UIViewRepresentable {
         textView.font = UIFont.preferredFont(forTextStyle: .body)
         textView.textColor = UIColor.label
         textView.tintColor = UIColor.systemBlue
-        textView.returnKeyType = .send
+        textView.returnKeyType = .default
         textView.textContainerInset = textContainerInset
         textView.textContainer.lineFragmentPadding = 0
         textView.textContainer.lineBreakMode = .byCharWrapping
@@ -2313,7 +2343,6 @@ private struct GrowingComposerTextView: UIViewRepresentable {
         @Binding private var isFocused: Bool
         private let minHeight: CGFloat
         private let maxHeight: CGFloat
-        private let onSubmit: () -> Void
         private let onVoiceInputTakeoverByKeyboard: () -> Void
         var isVoiceInputActive = false
         private var lastFocusRequestID = UUID()
@@ -2329,7 +2358,6 @@ private struct GrowingComposerTextView: UIViewRepresentable {
             isFocused: Binding<Bool>,
             minHeight: CGFloat,
             maxHeight: CGFloat,
-            onSubmit: @escaping () -> Void,
             onVoiceInputTakeoverByKeyboard: @escaping () -> Void
         ) {
             _text = text
@@ -2337,7 +2365,6 @@ private struct GrowingComposerTextView: UIViewRepresentable {
             _isFocused = isFocused
             self.minHeight = minHeight
             self.maxHeight = maxHeight
-            self.onSubmit = onSubmit
             self.onVoiceInputTakeoverByKeyboard = onVoiceInputTakeoverByKeyboard
         }
 
@@ -2385,10 +2412,6 @@ private struct GrowingComposerTextView: UIViewRepresentable {
             shouldChangeTextIn range: NSRange,
             replacementText replacement: String
         ) -> Bool {
-            if replacement == "\n" {
-                onSubmit()
-                return false
-            }
             // Keep IME composition stable (especially Chinese pinyin) by deferring
             // voice->keyboard takeover to `textViewDidChange`, after UIKit applies
             // the first input event.
@@ -2558,11 +2581,14 @@ private struct GrowingComposerTextView: UIViewRepresentable {
     }
 }
 
-private struct VoiceToggleButton: View {
-    let isVoicePrimed: Bool
-    let isRecordingVoice: Bool
-    let isTranscribingVoice: Bool
-    let isFinalizingVoice: Bool
+private struct ComposerAccessoryButton: View {
+    enum Mode {
+        case voice
+        case stop
+        case send
+    }
+
+    let mode: Mode
     let isDisabled: Bool
     let onTap: () -> Void
 
@@ -2572,9 +2598,13 @@ private struct VoiceToggleButton: View {
                 Circle()
                     .fill(backgroundColor)
 
-                if isVoicePrimed || isRecordingVoice || isTranscribingVoice || isFinalizingVoice {
+                if mode == .stop {
                     Image(systemName: "stop.fill")
                         .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.white)
+                } else if mode == .send {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 18, weight: .bold))
                         .foregroundStyle(.white)
                 } else {
                     Image(systemName: "mic.fill")
@@ -2589,13 +2619,14 @@ private struct VoiceToggleButton: View {
     }
 
     private var backgroundColor: Color {
-        if isFinalizingVoice {
+        switch mode {
+        case .voice:
             return Color.orange.opacity(0.92)
-        }
-        if isVoicePrimed || isRecordingVoice || isTranscribingVoice {
+        case .stop:
+            return Color.blue.opacity(0.92)
+        case .send:
             return Color.blue.opacity(0.92)
         }
-        return Color.orange.opacity(0.92)
     }
 }
 
