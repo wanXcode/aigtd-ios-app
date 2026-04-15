@@ -157,6 +157,9 @@ struct AgentRuntimeService {
                 throw runtimeError
             }
         }
+        if let structuredResult = makeStructuredResult(from: returnedText) {
+            return structuredResult
+        }
         if let onTextUpdate {
             await onTextUpdate(returnedText.trimmingCharacters(in: .whitespacesAndNewlines))
         }
@@ -212,7 +215,8 @@ struct AgentRuntimeService {
             if let extracted = extractReadableTextFromSSEPayload(payload, eventName: currentEvent, currentText: latestResolvedText),
                extracted != latestResolvedText {
                 latestResolvedText = extracted
-                if let onTextUpdate {
+                if let onTextUpdate,
+                   makeStructuredResult(from: latestResolvedText) == nil {
                     await onTextUpdate(latestResolvedText)
                 }
             }
@@ -267,6 +271,9 @@ struct AgentRuntimeService {
         guard resolvedText.isEmpty == false else {
             throw AgentRuntimeError.invalidPayload(rawBody.isEmpty ? lastPayloadSummary : rawBody)
         }
+        if let structuredResult = makeStructuredResult(from: resolvedText) {
+            return structuredResult
+        }
         if let onTextUpdate {
             await onTextUpdate(resolvedText)
         }
@@ -319,6 +326,11 @@ struct AgentRuntimeService {
         reminderItems: [ReminderItemInfo],
         agentContext: AIGTDAgentRuntimeContext?
     ) -> String {
+        let now = Date()
+        let currentTimeZone = TimeZone.current
+        let isoFormatter = ISO8601DateFormatter()
+        let currentTimestamp = isoFormatter.string(from: now)
+        let displayTimestamp = now.formatted(date: .complete, time: .shortened)
         let openItemCount = reminderItems.filter { !$0.isCompleted }.count
         let todayItems = reminderItems.filter { item in
             guard let dueDate = item.dueDate else { return false }
@@ -340,15 +352,19 @@ struct AgentRuntimeService {
         你是 AIGTD，一个长期在线的个人事务管理助手。你现在在 iPhone App 里和用户直接对话。
 
         你的目标：
-        - 像事务秘书一样接话，先结论，后补充
-        - 说人话，不要输出 JSON，不要输出代码块，不要解释接口
-        - 简短、自然、稳，不要机械
+        - 准确判断用户是否要创建任务、创建清单、查看事项、移动任务、完成任务，或只是普通聊天
+        - 先做结构化理解，再交给本地执行层落地
+        - 对于会修改系统状态的动作，不要提前宣称“已经成功执行”
+        - 输出必须是单个 JSON 对象，不要输出代码块，不要输出额外解释
 
         当前提醒事项列表：\(availableLists.isEmpty ? "无" : availableLists)
         当前未完成事项数：\(openItemCount)
         今天到期事项数：\(todayItems.count)
         最近事项预览：
         \(recentPreview.isEmpty ? "- 暂无" : recentPreview)
+        当前本地时间：\(displayTimestamp)
+        当前 ISO 时间：\(currentTimestamp)
+        当前时区：\(currentTimeZone.identifier)
 
         用户记忆：
         \(memoryBlock.isEmpty ? "暂无额外记忆" : memoryBlock)
@@ -356,7 +372,40 @@ struct AgentRuntimeService {
         协作原则：
         \(operatingGuideBlock.isEmpty ? "- 直接接住用户的话，默认按事务管理语境理解。" : operatingGuideBlock)
 
-        现在请只输出给用户看的自然语言回复正文。
+        你必须返回一个单独的 JSON 对象，字段如下：
+        {
+          "reply": "给用户看的简短草稿回复。若 intent 会修改系统状态，只能表达“我来处理”，不能宣称已经成功。",
+          "summary": "内部摘要，简短明确",
+          "confidence": 0 到 1 的小数,
+          "followUpPrompt": "可选字符串，没有就填 null",
+          "matchedSignals": ["命中的意图信号"],
+          "action": {
+            "intent": "create_reminder | create_list | summarize_lists | capture_message | move_reminder | complete_reminder | fallback",
+            "title": "动作标题",
+            "entities": {
+              "title": "任务标题",
+              "due_date": "ISO8601 时间字符串，没有就留空字符串",
+              "preferred_list_name": "期望清单名，没有就留空字符串",
+              "note": "备注，没有就留空字符串",
+              "source_text": "用户原话"
+            },
+            "requiresConfirmation": false
+          }
+        }
+
+        约束：
+        - summarize_lists / capture_message / fallback 也必须返回上述 JSON
+        - 如果用户是在查看任务，就不要伪装成 create_reminder
+        - 如果用户只是打招呼、试探、闲聊，intent 应为 capture_message 或 fallback
+        - 所有相对日期都必须以上面的“当前本地时间”和“当前时区”为准
+        - “今天 / 明天 / 后天 / 下周X”必须换算成正确的未来 ISO8601 时间，不能瞎猜年份
+        - 如果用户没有给具体时刻，但给了日期，due_date 默认用当地时间 09:00:00
+        - 不要把相对日期解析到过去
+        - 对 create_reminder，entities 至少包含 title、due_date、preferred_list_name、note、source_text
+        - 对 create_list，entities 至少包含 list_name
+        - 对 move_reminder，entities 至少包含 target、destination_list
+        - 对 complete_reminder，entities 至少包含 target
+        - 只输出 JSON，不要输出 markdown，不要输出 ```json
         """
     }
 
@@ -768,6 +817,67 @@ struct AgentRuntimeService {
         }
         return text
     }
+
+    private func makeStructuredResult(from rawText: String) -> MockAgentResult? {
+        guard let envelope = parseRemoteAgentEnvelope(from: rawText) else {
+            return nil
+        }
+        let mockEnvelope = envelope.toMockEnvelope()
+        guard let data = try? JSONEncoder().encode(mockEnvelope),
+              let payloadJSON = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+
+        return MockAgentResult(
+            reply: envelope.replyText,
+            summary: envelope.summaryText,
+            actionType: mockEnvelope.action.intent,
+            payloadJSON: payloadJSON,
+            confidence: envelope.confidenceValue,
+            followUpPrompt: envelope.followUpPrompt
+        )
+    }
+
+    private func parseRemoteAgentEnvelope(from rawText: String) -> RemoteAgentEnvelope? {
+        let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else { return nil }
+
+        let candidates = [
+            trimmed,
+            sanitizedJSONObjectText(from: trimmed)
+        ].compactMap { $0 }
+
+        for candidate in candidates {
+            guard let data = candidate.data(using: .utf8),
+                  let envelope = try? JSONDecoder().decode(RemoteAgentEnvelope.self, from: data),
+                  envelope.isMeaningful else {
+                continue
+            }
+            return envelope
+        }
+
+        return nil
+    }
+
+    private func sanitizedJSONObjectText(from rawText: String) -> String? {
+        var candidate = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if candidate.hasPrefix("```") {
+            candidate = candidate
+                .replacingOccurrences(of: "```json", with: "")
+                .replacingOccurrences(of: "```JSON", with: "")
+                .replacingOccurrences(of: "```", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        guard let firstBrace = candidate.firstIndex(of: "{"),
+              let lastBrace = candidate.lastIndex(of: "}"),
+              firstBrace <= lastBrace else {
+            return nil
+        }
+
+        let sliced = candidate[firstBrace...lastBrace]
+        return String(sliced)
+    }
 }
 
 private enum AgentRuntimeError: LocalizedError {
@@ -934,32 +1044,53 @@ private enum WireAPIMode: String {
 }
 
 private struct RemoteAgentEnvelope: Decodable {
-    let reply: String
-    let summary: String
-    let confidence: Double
+    let reply: String?
+    let summary: String?
+    let confidence: Double?
     let followUpPrompt: String?
-    let matchedSignals: [String]
+    let matchedSignals: [String]?
     let action: RemoteAgentAction
+
+    var replyText: String {
+        let trimmed = reply?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty == false ? trimmed : "我来帮你处理一下。"
+    }
+
+    var summaryText: String {
+        let trimmed = summary?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty == false ? trimmed : "远端结构化动作"
+    }
+
+    var confidenceValue: Double {
+        confidence ?? 0.82
+    }
+
+    var isMeaningful: Bool {
+        action.intent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    }
 
     func toMockEnvelope() -> MockAgentEnvelope {
         MockAgentEnvelope(
             action: MockAgentActionPayload(
                 intent: action.intent,
-                title: action.title,
-                entities: action.entities,
-                requiresConfirmation: action.requiresConfirmation
+                title: {
+                    let trimmed = action.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    return trimmed.isEmpty == false ? trimmed : action.intent
+                }(),
+                entities: action.entities ?? [:],
+                requiresConfirmation: action.requiresConfirmation ?? false
             ),
-            confidence: confidence,
-            summary: summary,
+            confidence: confidenceValue,
+            summary: summaryText,
             followUpPrompt: followUpPrompt,
-            matchedSignals: matchedSignals
+            matchedSignals: matchedSignals ?? []
         )
     }
 }
 
 private struct RemoteAgentAction: Decodable {
     let intent: String
-    let title: String
-    let entities: [String: String]
-    let requiresConfirmation: Bool
+    let title: String?
+    let entities: [String: String]?
+    let requiresConfirmation: Bool?
 }

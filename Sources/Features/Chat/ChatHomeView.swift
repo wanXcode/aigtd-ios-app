@@ -361,19 +361,28 @@ struct ChatHomeView: View {
             remoteResult: result,
             runtimeContext: runtimeContext
         )
-        updateRuntimeNotice(using: result)
-        assistantMessage.text = result.reply
+        let displayResult = resolveDisplayResult(
+            remoteResult: result,
+            executionResult: executionResult
+        )
+        let startsPending = [
+            MockAgentIntent.createList.rawValue,
+            MockAgentIntent.createReminder.rawValue,
+            MockAgentIntent.moveReminder.rawValue,
+            MockAgentIntent.completeReminder.rawValue
+        ].contains(executionResult.actionType ?? "")
+        updateRuntimeNotice(
+            remoteResult: result,
+            executionResult: executionResult
+        )
+        assistantMessage.text = startsPending
+            ? pendingAssistantReply(for: executionResult)
+            : displayResult.reply
         assistantMessage.actionResultSummary = executionResult.actionType == nil ? "" : executionResult.summary
         assistantMessage.status = "sent"
         isStreamingReply = false
         var createdLogID: UUID?
         if let actionType = executionResult.actionType {
-            let startsPending = [
-                MockAgentIntent.createList.rawValue,
-                MockAgentIntent.createReminder.rawValue,
-                MockAgentIntent.moveReminder.rawValue,
-                MockAgentIntent.completeReminder.rawValue
-            ].contains(actionType)
             let log = ActionLog(
                 sessionID: session.id,
                 messageID: assistantMessage.id,
@@ -394,7 +403,11 @@ struct ChatHomeView: View {
         try? modelContext.save()
 
         if let createdLogID {
-            await executeResultAction(logID: createdLogID, result: executionResult)
+            if let outcome = await executeResultAction(logID: createdLogID, result: executionResult) {
+                assistantMessage.text = outcome.reply
+                assistantMessage.actionResultSummary = outcome.summary
+                try? modelContext.save()
+            }
         }
     }
 
@@ -784,6 +797,11 @@ struct ChatHomeView: View {
         case denied
     }
 
+    private struct ActionExecutionOutcome {
+        let reply: String
+        let summary: String
+    }
+
     private func requestMicrophonePermissionIfNeeded() async -> MicrophonePermissionResult {
         switch AVAudioApplication.shared.recordPermission {
         case .granted:
@@ -814,8 +832,8 @@ struct ChatHomeView: View {
     private func executeResultAction(
         logID: UUID,
         result: MockAgentResult
-    ) async {
-        guard let log = actionLogs.first(where: { $0.id == logID }) else { return }
+    ) async -> ActionExecutionOutcome? {
+        guard let log = actionLogs.first(where: { $0.id == logID }) else { return nil }
 
         if result.actionType == MockAgentIntent.createList.rawValue {
             guard let envelope = decodePayload(from: result.payloadJSON),
@@ -824,7 +842,10 @@ struct ChatHomeView: View {
                 log.errorMessage = "无法解析要创建的列表名称。"
                 log.executedAt = .now
                 try? modelContext.save()
-                return
+                return ActionExecutionOutcome(
+                    reply: "我理解的是要新建清单，但这次没能解析出清单名称。",
+                    summary: "创建清单失败"
+                )
             }
 
             let created = await appModel.createReminderList(named: listName)
@@ -832,7 +853,17 @@ struct ChatHomeView: View {
             log.errorMessage = created ? "" : appModel.reminderListsErrorMessage.nonEmpty ?? "创建列表失败。"
             log.executedAt = .now
             try? modelContext.save()
-            return
+            if created {
+                return ActionExecutionOutcome(
+                    reply: "好，“\(listName)”这个清单已经建好了。",
+                    summary: "已创建清单：\(listName)"
+                )
+            }
+            let errorText = log.errorMessage.nonEmpty ?? "创建列表失败。"
+            return ActionExecutionOutcome(
+                reply: "我理解的是要新建清单，但这次没有建成功：\(errorText)",
+                summary: "创建清单失败"
+            )
         }
 
         if result.actionType == MockAgentIntent.createReminder.rawValue {
@@ -842,7 +873,10 @@ struct ChatHomeView: View {
                 log.errorMessage = "无法解析要创建的任务标题。"
                 log.executedAt = .now
                 try? modelContext.save()
-                return
+                return ActionExecutionOutcome(
+                    reply: "我理解的是要新建任务，但这次没能解析出任务标题。",
+                    summary: "创建任务失败"
+                )
             }
 
             let dueDate = parseISODate(envelope.action.entities["due_date"])
@@ -863,13 +897,30 @@ struct ChatHomeView: View {
                 appModel.prepareReminderFocus(identifier: reminderID)
                 log.executionStatus = "success"
                 log.errorMessage = ""
+                let actualListName = appModel.reminderItems
+                    .first(where: { $0.id == reminderID })?
+                    .listTitle
+                    .nonEmpty ?? preferredListName
+                log.executedAt = .now
+                try? modelContext.save()
+                return ActionExecutionOutcome(
+                    reply: createReminderSuccessReply(
+                        title: title,
+                        dueDate: dueDate,
+                        listName: actualListName
+                    ),
+                    summary: "已创建任务：\(title)"
+                )
             } catch {
                 log.executionStatus = "failed"
                 log.errorMessage = error.localizedDescription
+                log.executedAt = .now
+                try? modelContext.save()
+                return ActionExecutionOutcome(
+                    reply: "我理解的是要新建任务，但这次没有写进提醒事项：\(error.localizedDescription)",
+                    summary: "创建任务失败"
+                )
             }
-            log.executedAt = .now
-            try? modelContext.save()
-            return
         }
 
         if result.actionType == MockAgentIntent.moveReminder.rawValue {
@@ -886,7 +937,10 @@ struct ChatHomeView: View {
                 log.errorMessage = "无法解析要移动的任务或目标列表。"
                 log.executedAt = .now
                 try? modelContext.save()
-                return
+                return ActionExecutionOutcome(
+                    reply: "我理解的是要移动任务，但这次没能解析出任务或目标清单。",
+                    summary: "移动任务失败"
+                )
             }
 
             do {
@@ -897,13 +951,22 @@ struct ChatHomeView: View {
                 await appModel.refreshReminderLists()
                 log.executionStatus = "success"
                 log.errorMessage = ""
+                log.executedAt = .now
+                try? modelContext.save()
+                return ActionExecutionOutcome(
+                    reply: "好，“\(target)”这条我已经移到“\(destination)”了。",
+                    summary: "已移动任务：\(target)"
+                )
             } catch {
                 log.executionStatus = "failed"
                 log.errorMessage = error.localizedDescription
+                log.executedAt = .now
+                try? modelContext.save()
+                return ActionExecutionOutcome(
+                    reply: "我理解的是要移动任务，但这次没有改成功：\(error.localizedDescription)",
+                    summary: "移动任务失败"
+                )
             }
-            log.executedAt = .now
-            try? modelContext.save()
-            return
         }
 
         if result.actionType == MockAgentIntent.completeReminder.rawValue {
@@ -916,7 +979,10 @@ struct ChatHomeView: View {
                 log.errorMessage = "无法解析要完成的任务。"
                 log.executedAt = .now
                 try? modelContext.save()
-                return
+                return ActionExecutionOutcome(
+                    reply: "我理解的是要完成一条任务，但这次没能解析出具体目标。",
+                    summary: "完成任务失败"
+                )
             }
 
             do {
@@ -924,18 +990,28 @@ struct ChatHomeView: View {
                 await appModel.refreshReminderLists()
                 log.executionStatus = "success"
                 log.errorMessage = ""
+                log.executedAt = .now
+                try? modelContext.save()
+                return ActionExecutionOutcome(
+                    reply: "好，“\(target)”这条已经标记完成了。",
+                    summary: "已完成任务：\(target)"
+                )
             } catch {
                 log.executionStatus = "failed"
                 log.errorMessage = error.localizedDescription
+                log.executedAt = .now
+                try? modelContext.save()
+                return ActionExecutionOutcome(
+                    reply: "我理解的是要完成任务，但这次没有改成功：\(error.localizedDescription)",
+                    summary: "完成任务失败"
+                )
             }
-            log.executedAt = .now
-            try? modelContext.save()
-            return
         }
 
         log.executionStatus = "success"
         log.executedAt = .now
         try? modelContext.save()
+        return nil
     }
 
     private func decodePayload(from json: String) -> MockAgentEnvelope? {
@@ -965,19 +1041,43 @@ struct ChatHomeView: View {
         remoteResult: MockAgentResult,
         runtimeContext: AIGTDAgentRuntimeContext?
     ) -> MockAgentResult {
-        let executableIntents: Set<String> = [
-            MockAgentIntent.createReminder.rawValue,
-            MockAgentIntent.createList.rawValue,
-            MockAgentIntent.moveReminder.rawValue,
-            MockAgentIntent.completeReminder.rawValue
-        ]
-
-        if let actionType = remoteResult.actionType,
-           executableIntents.contains(actionType),
-           decodePayload(from: remoteResult.payloadJSON) != nil {
+        if isStructuredResult(remoteResult) {
             return remoteResult
         }
+
+        let localFallback = MockAgentService().respond(
+            to: userContent,
+            reminderLists: appModel.reminderLists,
+            reminderItems: appModel.reminderItems,
+            agentContext: runtimeContext
+        )
+        if isStructuredResult(localFallback) {
+            return localFallback
+        }
+
         return remoteResult
+    }
+
+    private func resolveDisplayResult(
+        remoteResult: MockAgentResult,
+        executionResult: MockAgentResult
+    ) -> MockAgentResult {
+        if isStructuredResult(remoteResult) {
+            return remoteResult
+        }
+        if isStructuredResult(executionResult) {
+            return executionResult
+        }
+        return remoteResult
+    }
+
+    private func isStructuredResult(_ result: MockAgentResult) -> Bool {
+        guard let actionType = result.actionType,
+              actionType.isEmpty == false,
+              decodePayload(from: result.payloadJSON) != nil else {
+            return false
+        }
+        return true
     }
 
     private func scrollToLatestMessage(using proxy: ScrollViewProxy, animated: Bool) {
@@ -1015,8 +1115,20 @@ struct ChatHomeView: View {
     }
     }
 
-    private func updateRuntimeNotice(using result: MockAgentResult) {
-        if result.summary.contains("远端模型暂时不可用") {
+    private func updateRuntimeNotice(
+        remoteResult: MockAgentResult,
+        executionResult: MockAgentResult
+    ) {
+        if isStructuredResult(remoteResult) == false,
+           isStructuredResult(executionResult) {
+            runtimeNotice = RuntimeNotice(
+                text: "这次我按本地规则直接接住并处理了这条消息。",
+                tone: .success
+            )
+            return
+        }
+
+        if remoteResult.summary.contains("远端模型暂时不可用") {
             runtimeNotice = RuntimeNotice(
                 text: "远端模型暂时不可用，这次未能完成回复。",
                 tone: .warning
@@ -1024,7 +1136,7 @@ struct ChatHomeView: View {
             return
         }
 
-        if result.summary.contains("远端返回格式暂未兼容") {
+        if remoteResult.summary.contains("远端返回格式暂未兼容") {
             runtimeNotice = RuntimeNotice(
                 text: "模型已经连上了，但这次聊天返回格式还没完全兼容。",
                 tone: .warning
@@ -1065,6 +1177,48 @@ struct ChatHomeView: View {
             text: "模型已保存，你可以继续发送刚才那条消息了。",
             tone: .success
         )
+    }
+
+    private func pendingAssistantReply(for result: MockAgentResult) -> String {
+        switch result.actionType {
+        case MockAgentIntent.createReminder.rawValue:
+            return "我来帮你记一下这条任务。"
+        case MockAgentIntent.createList.rawValue:
+            return "我来帮你建这个清单。"
+        case MockAgentIntent.moveReminder.rawValue:
+            return "我来帮你调整这条任务。"
+        case MockAgentIntent.completeReminder.rawValue:
+            return "我来帮你把这条标记完成。"
+        default:
+            return result.reply
+        }
+    }
+
+    private func createReminderSuccessReply(
+        title: String,
+        dueDate: Date?,
+        listName: String?
+    ) -> String {
+        var lines: [String] = ["好，已经记上了：\(title)。"]
+
+        if let dueDate {
+            let dueLabel: String
+            let calendar = Calendar.current
+            if calendar.isDateInToday(dueDate) {
+                dueLabel = "今天"
+            } else if calendar.isDateInTomorrow(dueDate) {
+                dueLabel = "明天"
+            } else {
+                dueLabel = dueDate.formatted(date: .abbreviated, time: .omitted)
+            }
+            lines.append("时间我放到\(dueLabel)了。")
+        }
+
+        if let listName, listName.isEmpty == false {
+            lines.append("我先放在“\(listName)”里。")
+        }
+
+        return lines.joined(separator: "\n")
     }
 
     private var chatBackground: some View {

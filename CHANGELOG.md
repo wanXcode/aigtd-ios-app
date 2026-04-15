@@ -8,6 +8,7 @@ Current development changes after `0.2.0`.
 
 - redesigned the in-app Reminders browser with system-list ordering, empty-list visibility, latest-sync status, and direct completion / deletion actions
 - added reminder browser states for permission missing, sync failure, empty store, and no remaining active tasks
+- documented the structured AI action execution plan for chat-driven Reminders operations under `docs/ai-structured-action-execution.md`
 
 ### Improved
 
@@ -16,12 +17,15 @@ Current development changes after `0.2.0`.
 - aligned remote streaming text callbacks with `@MainActor` expectations to keep chat reply rendering safer on the UI thread
 - improved voice session lifecycle handling when the Doubao ASR engine is not fully ready or disconnects during finalize
 - kept reminder sync state metadata (`lastReminderSyncAt`) so the UI can show the latest refresh time more clearly
+- switched the remote chat runtime to prefer structured JSON actions so the app can distinguish task execution from plain conversation more reliably
+- updated chat execution flow to show pending wording first and only confirm success after local Reminders writes actually finish
 
 ### Fixed
 
 - fixed Reminders sections disappearing when a list had no active tasks
 - fixed stale reminder data remaining visible after reminders permission was revoked
 - fixed speech session user ID generation to avoid depending on `identifierForVendor`
+- fixed chat replies claiming a reminder was created even when no executable action had been produced or persisted
 
 ## 0.2.0
 
