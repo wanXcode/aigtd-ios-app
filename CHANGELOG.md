@@ -9,6 +9,7 @@ Current development changes after `0.2.0`.
 - redesigned the in-app Reminders browser with system-list ordering, empty-list visibility, latest-sync status, and direct completion / deletion actions
 - added reminder browser states for permission missing, sync failure, empty store, and no remaining active tasks
 - documented the structured AI action execution plan for chat-driven Reminders operations under `docs/ai-structured-action-execution.md`
+- added structured `delete_reminder` chat intent execution so follow-up delete requests can remove reminders for real instead of only replying in text
 
 ### Improved
 
@@ -19,6 +20,7 @@ Current development changes after `0.2.0`.
 - kept reminder sync state metadata (`lastReminderSyncAt`) so the UI can show the latest refresh time more clearly
 - switched the remote chat runtime to prefer structured JSON actions so the app can distinguish task execution from plain conversation more reliably
 - updated chat execution flow to show pending wording first and only confirm success after local Reminders writes actually finish
+- included a recent conversation window in remote model prompts so phrases like “刚才那条 / 你刚建的那个” can resolve against chat context more reliably
 
 ### Fixed
 
@@ -26,6 +28,8 @@ Current development changes after `0.2.0`.
 - fixed stale reminder data remaining visible after reminders permission was revoked
 - fixed speech session user ID generation to avoid depending on `identifierForVendor`
 - fixed chat replies claiming a reminder was created even when no executable action had been produced or persisted
+- fixed streaming chat rendering leaking raw structured JSON to the message bubble before the final reply was resolved
+- fixed follow-up task deletion commands failing because relative references like “删除刚才这条任务” were not mapped back to the most recently created reminder
 
 ## 0.2.0
 

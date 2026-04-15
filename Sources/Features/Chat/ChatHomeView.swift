@@ -201,6 +201,23 @@ struct ChatHomeView: View {
         return messages.filter { $0.sessionID == activeSession.id }
     }
 
+    private var recentConversationHistory: [AgentConversationTurn] {
+        Array(
+            activeMessages
+                .filter { message in
+                    message.status != "streaming" &&
+                    message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                }
+                .suffix(8)
+                .map { message in
+                    AgentConversationTurn(
+                        role: message.role,
+                        text: message.text
+                    )
+                }
+        )
+    }
+
     private var latestActionLogByMessageID: [UUID: ActionLog] {
         guard let activeSession else { return [:] }
         var lookup: [UUID: ActionLog] = [:]
@@ -314,6 +331,7 @@ struct ChatHomeView: View {
     }
 
     private func sendPrompt(_ content: String) async {
+        let conversationHistory = recentConversationHistory
         let session: ChatSession
         if let existing = activeSession {
             session = existing
@@ -347,6 +365,7 @@ struct ChatHomeView: View {
             reminderItems: appModel.reminderItems,
             configuration: activeModelConfiguration,
             agentContext: runtimeContext,
+            conversationHistory: conversationHistory,
             onTextUpdate: { partialText in
                 if partialText.isEmpty == false {
                     isStreamingReply = true
@@ -369,7 +388,8 @@ struct ChatHomeView: View {
             MockAgentIntent.createList.rawValue,
             MockAgentIntent.createReminder.rawValue,
             MockAgentIntent.moveReminder.rawValue,
-            MockAgentIntent.completeReminder.rawValue
+            MockAgentIntent.completeReminder.rawValue,
+            MockAgentIntent.deleteReminder.rawValue
         ].contains(executionResult.actionType ?? "")
         updateRuntimeNotice(
             remoteResult: result,
@@ -802,6 +822,11 @@ struct ChatHomeView: View {
         let summary: String
     }
 
+    private struct ReminderReference {
+        let targetText: String
+        let identifier: String?
+    }
+
     private func requestMicrophonePermissionIfNeeded() async -> MicrophonePermissionResult {
         switch AVAudioApplication.shared.recordPermission {
         case .granted:
@@ -897,6 +922,7 @@ struct ChatHomeView: View {
                 appModel.prepareReminderFocus(identifier: reminderID)
                 log.executionStatus = "success"
                 log.errorMessage = ""
+                log.undoToken = reminderID
                 let actualListName = appModel.reminderItems
                     .first(where: { $0.id == reminderID })?
                     .listTitle
@@ -925,13 +951,17 @@ struct ChatHomeView: View {
 
         if result.actionType == MockAgentIntent.moveReminder.rawValue {
             guard let envelope = decodePayload(from: result.payloadJSON),
-                  let target = actionEntityValue(
+                  let rawTarget = actionEntityValue(
                     in: envelope.action.entities,
                     keys: ["target", "title", "task_title", "task", "object"]
                   ),
                   let destination = actionEntityValue(
                     in: envelope.action.entities,
                     keys: ["destination_list", "preferred_list_name", "list_name", "destination"]
+                  ),
+                  let resolvedReference = resolveReminderReference(
+                    rawTarget,
+                    sessionID: log.sessionID
                   ) else {
                 log.executionStatus = "failed"
                 log.errorMessage = "无法解析要移动的任务或目标列表。"
@@ -943,6 +973,7 @@ struct ChatHomeView: View {
                 )
             }
 
+            let target = resolvedReference.targetText
             do {
                 _ = try await ReminderStoreService().moveReminder(
                     targetText: target,
@@ -971,9 +1002,13 @@ struct ChatHomeView: View {
 
         if result.actionType == MockAgentIntent.completeReminder.rawValue {
             guard let envelope = decodePayload(from: result.payloadJSON),
-                  let target = actionEntityValue(
+                  let rawTarget = actionEntityValue(
                     in: envelope.action.entities,
                     keys: ["target", "title", "task_title", "task", "object"]
+                  ),
+                  let resolvedReference = resolveReminderReference(
+                    rawTarget,
+                    sessionID: log.sessionID
                   ) else {
                 log.executionStatus = "failed"
                 log.errorMessage = "无法解析要完成的任务。"
@@ -985,6 +1020,7 @@ struct ChatHomeView: View {
                 )
             }
 
+            let target = resolvedReference.targetText
             do {
                 _ = try await ReminderStoreService().completeReminder(targetText: target)
                 await appModel.refreshReminderLists()
@@ -1004,6 +1040,60 @@ struct ChatHomeView: View {
                 return ActionExecutionOutcome(
                     reply: "我理解的是要完成任务，但这次没有改成功：\(error.localizedDescription)",
                     summary: "完成任务失败"
+                )
+            }
+        }
+
+        if result.actionType == MockAgentIntent.deleteReminder.rawValue {
+            guard let envelope = decodePayload(from: result.payloadJSON),
+                  let rawTarget = actionEntityValue(
+                    in: envelope.action.entities,
+                    keys: ["target", "title", "task_title", "task", "object"]
+                  ),
+                  let resolvedReference = resolveReminderReference(
+                    rawTarget,
+                    sessionID: log.sessionID
+                  ) else {
+                log.executionStatus = "failed"
+                log.errorMessage = "无法解析要删除的任务。"
+                log.executedAt = .now
+                try? modelContext.save()
+                return ActionExecutionOutcome(
+                    reply: "我理解的是要删除一条任务，但这次没能解析出具体目标。",
+                    summary: "删除任务失败"
+                )
+            }
+
+            let target = resolvedReference.targetText
+            do {
+                let deletedIdentifier: String
+                if let identifier = resolvedReference.identifier {
+                    let deleted = await appModel.deleteReminder(identifier: identifier)
+                    guard deleted else {
+                        throw ReminderStoreError.reminderNotFound(target)
+                    }
+                    deletedIdentifier = identifier
+                } else {
+                    deletedIdentifier = try await ReminderStoreService().deleteReminder(targetText: target)
+                    await appModel.refreshReminderLists()
+                }
+                log.executionStatus = "success"
+                log.errorMessage = ""
+                log.undoToken = deletedIdentifier
+                log.executedAt = .now
+                try? modelContext.save()
+                return ActionExecutionOutcome(
+                    reply: "好，“\(target)”这条我已经帮你删掉了。",
+                    summary: "已删除任务：\(target)"
+                )
+            } catch {
+                log.executionStatus = "failed"
+                log.errorMessage = error.localizedDescription
+                log.executedAt = .now
+                try? modelContext.save()
+                return ActionExecutionOutcome(
+                    reply: "我理解的是要删除任务，但这次没有删成功：\(error.localizedDescription)",
+                    summary: "删除任务失败"
                 )
             }
         }
@@ -1034,6 +1124,51 @@ struct ChatHomeView: View {
             }
         }
         return nil
+    }
+
+    private func resolveReminderReference(
+        _ rawTarget: String,
+        sessionID: UUID
+    ) -> ReminderReference? {
+        let trimmed = rawTarget.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else { return nil }
+
+        if isRelativeReminderReference(trimmed),
+           let recent = latestCreatedReminderReference(in: sessionID) {
+            return recent
+        }
+
+        return ReminderReference(targetText: trimmed, identifier: nil)
+    }
+
+    private func isRelativeReminderReference(_ value: String) -> Bool {
+        let hints = [
+            "当前这条", "这条", "那条", "上一条", "上一个", "刚才", "刚刚",
+            "最新那条", "刚建", "新建的那条", "刚创建", "刚创建的那条"
+        ]
+        return hints.contains { value.contains($0) }
+    }
+
+    private func latestCreatedReminderReference(in sessionID: UUID) -> ReminderReference? {
+        let latestLog = actionLogs
+            .filter {
+                $0.sessionID == sessionID &&
+                $0.actionType == MockAgentIntent.createReminder.rawValue &&
+                $0.executionStatus == "success"
+            }
+            .sorted { $0.createdAt > $1.createdAt }
+            .first
+
+        guard let latestLog,
+              let envelope = decodePayload(from: latestLog.payloadJSON),
+              let title = envelope.action.entities["title"]?.nonEmpty else {
+            return nil
+        }
+
+        return ReminderReference(
+            targetText: title,
+            identifier: latestLog.undoToken.nonEmpty
+        )
     }
 
     private func resolveExecutionResult(
@@ -1102,7 +1237,8 @@ struct ChatHomeView: View {
         switch log.actionType {
         case MockAgentIntent.createReminder.rawValue,
              MockAgentIntent.createList.rawValue,
-             MockAgentIntent.summarizeLists.rawValue:
+             MockAgentIntent.summarizeLists.rawValue,
+             MockAgentIntent.deleteReminder.rawValue:
             appModel.selectedTab = .reminders
         default:
             if let envelope = decodePayload(from: log.payloadJSON),
@@ -1189,6 +1325,8 @@ struct ChatHomeView: View {
             return "我来帮你调整这条任务。"
         case MockAgentIntent.completeReminder.rawValue:
             return "我来帮你把这条标记完成。"
+        case MockAgentIntent.deleteReminder.rawValue:
+            return "我来帮你删掉这条任务。"
         default:
             return result.reply
         }
@@ -1472,6 +1610,8 @@ private struct ActionResultCardView: View {
             return log.executionStatus == "success" ? "改好了" : "正在改"
         case "complete_reminder":
             return log.executionStatus == "success" ? "完成了" : "正在完成"
+        case "delete_reminder":
+            return log.executionStatus == "success" ? "删掉了" : "正在删除"
         default:
             return "我处理好了"
         }
@@ -1519,6 +1659,15 @@ private struct ActionResultCardView: View {
             default:
                 return "这条已经标记完成了"
             }
+        case "delete_reminder":
+            switch log.executionStatus {
+            case "pending":
+                return "我在帮你删除这条任务"
+            case "failed":
+                return log.errorMessage.nonEmpty ?? "任务暂时还没删除成功"
+            default:
+                return "这条已经从提醒事项里删掉了"
+            }
         default:
             return "这次我已经处理好了"
         }
@@ -1538,6 +1687,8 @@ private struct ActionResultCardView: View {
             return "arrow.right.circle"
         case "complete_reminder":
             return "checkmark.circle"
+        case "delete_reminder":
+            return "trash"
         default:
             return "checkmark.circle.fill"
         }
@@ -1557,6 +1708,8 @@ private struct ActionResultCardView: View {
             return .indigo
         case "complete_reminder":
             return .green
+        case "delete_reminder":
+            return .red
         default:
             return .green
         }
@@ -1621,6 +1774,10 @@ private struct ActionResultCardView: View {
             if let target = payload.action.entities["target"]?.nonEmpty {
                 lines.append("任务：\(target)")
             }
+        case "delete_reminder":
+            if let target = payload.action.entities["target"]?.nonEmpty {
+                lines.append("任务：\(target)")
+            }
         default:
             break
         }
@@ -1674,6 +1831,8 @@ private struct ActionResultCardView: View {
     private var primaryActionTitle: String? {
         switch log.actionType {
         case "create_reminder", "create_list", "summarize_lists":
+            return "去看清单"
+        case "delete_reminder":
             return "去看清单"
         case "capture_message", "move_reminder", "complete_reminder":
             return "继续编辑"
@@ -1892,7 +2051,8 @@ private struct ChatMessageRow: View {
         case MockAgentIntent.createReminder.rawValue,
              MockAgentIntent.createList.rawValue,
              MockAgentIntent.moveReminder.rawValue,
-             MockAgentIntent.completeReminder.rawValue:
+             MockAgentIntent.completeReminder.rawValue,
+             MockAgentIntent.deleteReminder.rawValue:
             return true
         default:
             return false

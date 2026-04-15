@@ -7,6 +7,7 @@ enum MockAgentIntent: String, Sendable {
     case captureMessage = "capture_message"
     case moveReminder = "move_reminder"
     case completeReminder = "complete_reminder"
+    case deleteReminder = "delete_reminder"
     case fallback = "fallback"
 }
 
@@ -122,6 +123,25 @@ struct MockAgentService {
                 confidence: 0.96,
                 followUpPrompt: "比如你可以直接说：明天提醒我给张闯回信。",
                 matchedSignals: ["casual_probe"]
+            )
+        }
+
+        if let deletion = detectDeletion(from: content) {
+            let action = MockAgentAction(
+                intent: .deleteReminder,
+                title: "删除任务",
+                entities: [
+                    "target": deletion.target
+                ],
+                requiresConfirmation: false
+            )
+            return makeResult(
+                reply: "我来帮你删掉这条提醒事项。",
+                summary: "准备删除：\(deletion.target)",
+                action: action,
+                confidence: deletion.confidence,
+                followUpPrompt: "如果你指的是刚才那条任务，我也可以直接按最近一条来处理。",
+                matchedSignals: deletion.signals
             )
         }
 
@@ -850,6 +870,46 @@ struct MockAgentService {
 
         let target = findCompletionTarget(in: text) ?? findTargetText(in: text) ?? "当前这条"
         return (target: target, confidence: 0.9, signals: ["complete"])
+    }
+
+    private func detectDeletion(from text: String) -> (target: String, confidence: Double, signals: [String])? {
+        guard matchesAny(text, keywords: ["删除", "删掉", "删了", "移除"]) else {
+            return nil
+        }
+
+        let likelyListDeletion = matchesAny(text, keywords: ["清单", "列表"]) &&
+            matchesAny(text, keywords: ["任务", "待办", "提醒", "这条", "那条", "上一条", "刚才", "刚刚"]) == false
+        guard likelyListDeletion == false else {
+            return nil
+        }
+
+        let target = findDeletionTarget(in: text) ?? findTargetText(in: text) ?? "当前这条"
+        return (target: target, confidence: 0.9, signals: ["delete"])
+    }
+
+    private func findDeletionTarget(in text: String) -> String? {
+        let patterns = [
+            #"(?:删除|删掉|删了|移除)\s*[“\"‘']?(.+?)[”\"’']?$"#,
+            #"把\s*[“\"‘']?(.+?)[”\"’']?\s*(?:删除|删掉|删了|移除)$"#
+        ]
+
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
+            guard let match = regex.firstMatch(in: text, range: nsRange),
+                  match.numberOfRanges > 1,
+                  let range = Range(match.range(at: 1), in: text) else {
+                continue
+            }
+
+            let extracted = String(text[range])
+                .trimmingCharacters(in: CharacterSet(charactersIn: " ，,。；;:：\"'“”‘’").union(.whitespacesAndNewlines))
+            if extracted.isEmpty == false {
+                return extracted
+            }
+        }
+
+        return nil
     }
 
     private func findCompletionTarget(in text: String) -> String? {

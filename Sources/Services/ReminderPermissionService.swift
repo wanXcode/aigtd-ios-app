@@ -265,6 +265,20 @@ struct ReminderStoreService {
         return identifier
     }
 
+    @discardableResult
+    func deleteReminder(targetText: String) async throws -> String {
+        let store = try authorizedStore()
+        store.refreshSourcesIfNecessary()
+
+        guard let reminderID = try await findReminderIdentifier(matching: targetText, store: store),
+              let reminder = store.calendarItem(withIdentifier: reminderID) as? EKReminder else {
+            throw ReminderStoreError.reminderNotFound(targetText)
+        }
+
+        try store.remove(reminder, commit: true)
+        return reminderID
+    }
+
     private func normalize(_ text: String) -> String {
         text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }

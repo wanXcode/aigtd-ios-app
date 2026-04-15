@@ -11,6 +11,11 @@ struct AgentModelConfiguration: Sendable {
     let timeoutSeconds: Double
 }
 
+struct AgentConversationTurn: Sendable {
+    let role: String
+    let text: String
+}
+
 struct AgentRuntimeService {
     func respond(
         to content: String,
@@ -18,6 +23,7 @@ struct AgentRuntimeService {
         reminderItems: [ReminderItemInfo],
         configuration: AgentModelConfiguration?,
         agentContext: AIGTDAgentRuntimeContext? = nil,
+        conversationHistory: [AgentConversationTurn] = [],
         onTextUpdate: (@MainActor @Sendable (String) async -> Void)? = nil
     ) async -> MockAgentResult {
         guard let configuration,
@@ -42,6 +48,7 @@ struct AgentRuntimeService {
                 reminderItems: reminderItems,
                 configuration: configuration,
                 agentContext: agentContext,
+                conversationHistory: conversationHistory,
                 onTextUpdate: onTextUpdate
             )
         } catch {
@@ -102,6 +109,7 @@ struct AgentRuntimeService {
         reminderItems: [ReminderItemInfo],
         configuration: AgentModelConfiguration,
         agentContext: AIGTDAgentRuntimeContext?,
+        conversationHistory: [AgentConversationTurn],
         onTextUpdate: (@MainActor @Sendable (String) async -> Void)?
     ) async throws -> MockAgentResult {
         if normalizedWireAPI(from: configuration) == .responses {
@@ -111,6 +119,7 @@ struct AgentRuntimeService {
                 reminderItems: reminderItems,
                 configuration: configuration,
                 agentContext: agentContext,
+                conversationHistory: conversationHistory,
                 onTextUpdate: onTextUpdate
             )
         }
@@ -121,7 +130,8 @@ struct AgentRuntimeService {
             reminderLists: reminderLists,
             reminderItems: reminderItems,
             configuration: configuration,
-            agentContext: agentContext
+            agentContext: agentContext,
+            conversationHistory: conversationHistory
         )
         let sessionConfiguration = URLSessionConfiguration.ephemeral
         sessionConfiguration.timeoutIntervalForRequest = configuration.timeoutSeconds
@@ -179,6 +189,7 @@ struct AgentRuntimeService {
         reminderItems: [ReminderItemInfo],
         configuration: AgentModelConfiguration,
         agentContext: AIGTDAgentRuntimeContext?,
+        conversationHistory: [AgentConversationTurn],
         onTextUpdate: (@MainActor @Sendable (String) async -> Void)?
     ) async throws -> MockAgentResult {
         let endpoint = normalizedEndpoint(from: configuration)
@@ -188,6 +199,7 @@ struct AgentRuntimeService {
             reminderItems: reminderItems,
             configuration: configuration,
             agentContext: agentContext,
+            conversationHistory: conversationHistory,
             forceStreaming: true
         )
         let sessionConfiguration = URLSessionConfiguration.ephemeral
@@ -297,6 +309,7 @@ struct AgentRuntimeService {
         reminderItems: [ReminderItemInfo],
         configuration: AgentModelConfiguration,
         agentContext: AIGTDAgentRuntimeContext?,
+        conversationHistory: [AgentConversationTurn],
         forceStreaming: Bool = false
     ) throws -> URLRequest {
         let endpoint = normalizedEndpoint(from: configuration)
@@ -308,7 +321,8 @@ struct AgentRuntimeService {
         let systemPrompt = buildSystemPrompt(
             availableLists: availableLists,
             reminderItems: reminderItems,
-            agentContext: agentContext
+            agentContext: agentContext,
+            conversationHistory: conversationHistory
         )
 
         var request = URLRequest(url: url)
@@ -327,7 +341,8 @@ struct AgentRuntimeService {
     private func buildSystemPrompt(
         availableLists: String,
         reminderItems: [ReminderItemInfo],
-        agentContext: AIGTDAgentRuntimeContext?
+        agentContext: AIGTDAgentRuntimeContext?,
+        conversationHistory: [AgentConversationTurn]
     ) -> String {
         let now = Date()
         let currentTimeZone = TimeZone.current
@@ -350,12 +365,14 @@ struct AgentRuntimeService {
 
         let memoryBlock = agentContext?.memory.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let operatingGuideBlock = agentContext?.operatingGuide.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let conversationBlock = formattedConversationWindow(conversationHistory)
 
         return """
         你是 AIGTD，一个长期在线的个人事务管理助手。你现在在 iPhone App 里和用户直接对话。
 
         你的目标：
         - 准确判断用户是否要创建任务、创建清单、查看事项、移动任务、完成任务，或只是普通聊天
+        - 用好“最近对话窗口”来理解“刚才那条 / 上一条 / 你刚帮我建的那个”这种上下文指代
         - 先做结构化理解，再交给本地执行层落地
         - 对于会修改系统状态的动作，不要提前宣称“已经成功执行”
         - 输出必须是单个 JSON 对象，不要输出代码块，不要输出额外解释
@@ -368,6 +385,8 @@ struct AgentRuntimeService {
         当前本地时间：\(displayTimestamp)
         当前 ISO 时间：\(currentTimestamp)
         当前时区：\(currentTimeZone.identifier)
+        最近对话窗口：
+        \(conversationBlock)
 
         用户记忆：
         \(memoryBlock.isEmpty ? "暂无额外记忆" : memoryBlock)
@@ -383,12 +402,13 @@ struct AgentRuntimeService {
           "followUpPrompt": "可选字符串，没有就填 null",
           "matchedSignals": ["命中的意图信号"],
           "action": {
-            "intent": "create_reminder | create_list | summarize_lists | capture_message | move_reminder | complete_reminder | fallback",
+            "intent": "create_reminder | create_list | summarize_lists | capture_message | move_reminder | complete_reminder | delete_reminder | fallback",
             "title": "动作标题",
             "entities": {
               "title": "任务标题",
               "due_date": "ISO8601 时间字符串，没有就留空字符串",
               "preferred_list_name": "期望清单名，没有就留空字符串",
+              "target": "要操作的任务标题，没有就留空字符串",
               "note": "备注，没有就留空字符串",
               "source_text": "用户原话"
             },
@@ -400,6 +420,7 @@ struct AgentRuntimeService {
         - summarize_lists / capture_message / fallback 也必须返回上述 JSON
         - 如果用户是在查看任务，就不要伪装成 create_reminder
         - 如果用户只是打招呼、试探、闲聊，intent 应为 capture_message 或 fallback
+        - 如果用户说“删除刚才那条 / 删除上一条 / 删掉你刚建的那个”，要结合最近对话窗口，尽量把 target 填成明确任务标题
         - 所有相对日期都必须以上面的“当前本地时间”和“当前时区”为准
         - “今天 / 明天 / 后天 / 下周X”必须换算成正确的未来 ISO8601 时间，不能瞎猜年份
         - 如果用户没有给具体时刻，但给了日期，due_date 默认用当地时间 09:00:00
@@ -408,8 +429,24 @@ struct AgentRuntimeService {
         - 对 create_list，entities 至少包含 list_name
         - 对 move_reminder，entities 至少包含 target、destination_list
         - 对 complete_reminder，entities 至少包含 target
+        - 对 delete_reminder，entities 至少包含 target
         - 只输出 JSON，不要输出 markdown，不要输出 ```json
         """
+    }
+
+    private func formattedConversationWindow(_ turns: [AgentConversationTurn]) -> String {
+        let recentTurns = Array(turns.suffix(8))
+        guard recentTurns.isEmpty == false else { return "- 暂无最近对话" }
+
+        return recentTurns.map { turn in
+            let roleLabel = turn.role == "assistant" ? "AI" : "用户"
+            let condensed = turn.text
+                .replacingOccurrences(of: "\n", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let preview = condensed.count > 160 ? "\(condensed.prefix(160))…" : condensed
+            return "- \(roleLabel)：\(preview)"
+        }
+        .joined(separator: "\n")
     }
 
     private func makeHealthCheckRequest(
