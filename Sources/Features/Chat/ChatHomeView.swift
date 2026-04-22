@@ -331,6 +331,7 @@ struct ChatHomeView: View {
     }
 
     private func sendPrompt(_ content: String) async {
+        let minimumPendingDisplayDuration = Duration.milliseconds(650)
         let conversationHistory = recentConversationHistory
         let session: ChatSession
         if let existing = activeSession {
@@ -359,6 +360,38 @@ struct ChatHomeView: View {
         try? modelContext.save()
 
         let runtimeContext = AIGTDAgentDocumentStore.runtimeContext(from: agentDocuments)
+        let localPreviewResult = MockAgentService().respond(
+            to: content,
+            reminderLists: appModel.reminderLists,
+            reminderItems: appModel.reminderItems,
+            agentContext: runtimeContext
+        )
+        let previewStartsPending = [
+            MockAgentIntent.createList.rawValue,
+            MockAgentIntent.createReminder.rawValue,
+            MockAgentIntent.moveReminder.rawValue,
+            MockAgentIntent.completeReminder.rawValue,
+            MockAgentIntent.deleteReminder.rawValue
+        ].contains(localPreviewResult.actionType ?? "")
+        var createdLogID: UUID?
+        var provisionalLog: ActionLog?
+        if previewStartsPending, let previewActionType = localPreviewResult.actionType {
+            let log = ActionLog(
+                sessionID: session.id,
+                messageID: assistantMessage.id,
+                actionType: previewActionType,
+                payloadJSON: localPreviewResult.payloadJSON,
+                executionStatus: "pending",
+                errorMessage: "",
+                executedAt: nil,
+                undoToken: ""
+            )
+            modelContext.insert(log)
+            provisionalLog = log
+            createdLogID = log.id
+            try? modelContext.save()
+        }
+
         let result = await agentRuntime.respond(
             to: content,
             reminderLists: appModel.reminderLists,
@@ -401,8 +434,20 @@ struct ChatHomeView: View {
         assistantMessage.actionResultSummary = executionResult.actionType == nil ? "" : executionResult.summary
         assistantMessage.status = "sent"
         isStreamingReply = false
-        var createdLogID: UUID?
-        if let actionType = executionResult.actionType {
+        if let provisionalLog {
+            if let actionType = executionResult.actionType, startsPending {
+                provisionalLog.actionType = actionType
+                provisionalLog.payloadJSON = executionResult.payloadJSON
+                provisionalLog.executionStatus = "pending"
+                provisionalLog.errorMessage = ""
+                provisionalLog.executedAt = nil
+            } else {
+                modelContext.delete(provisionalLog)
+                createdLogID = nil
+            }
+        }
+
+        if createdLogID == nil, let actionType = executionResult.actionType {
             let log = ActionLog(
                 sessionID: session.id,
                 messageID: assistantMessage.id,
@@ -422,7 +467,15 @@ struct ChatHomeView: View {
 
         try? modelContext.save()
 
+        if startsPending {
+            await Task.yield()
+            try? await Task.sleep(for: minimumPendingDisplayDuration)
+        }
+
         if let createdLogID {
+            if startsPending {
+                await Task.yield()
+            }
             if let outcome = await executeResultAction(logID: createdLogID, result: executionResult) {
                 assistantMessage.text = outcome.reply
                 assistantMessage.actionResultSummary = outcome.summary
@@ -1579,7 +1632,7 @@ private struct ActionResultCardView: View {
                 .padding(.top, 2)
             }
 
-            if let primaryActionTitle {
+            if log.executionStatus != "pending", let primaryActionTitle {
                 Button(primaryActionTitle, action: onPrimaryAction)
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
@@ -1594,6 +1647,8 @@ private struct ActionResultCardView: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .shadow(color: .black.opacity(0.04), radius: 8, x: 0, y: 3)
+        .contentTransition(.opacity)
+        .animation(.easeInOut(duration: 0.24), value: log.executionStatus)
     }
 
     private var title: String {
@@ -1718,15 +1773,23 @@ private struct ActionResultCardView: View {
     @ViewBuilder
     private var statusPill: some View {
         let style = statusStyle
-        Text(style.label)
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(style.foreground)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(style.background)
-            )
+        HStack(spacing: 6) {
+            if log.executionStatus == "pending" {
+                ProgressView()
+                    .controlSize(.mini)
+                    .tint(style.foreground)
+            }
+
+            Text(style.label)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(style.foreground)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(
+            Capsule(style: .continuous)
+                .fill(style.background)
+        )
     }
 
     private var payloadLines: [String] {
@@ -2000,11 +2063,15 @@ private struct ChatMessageRow: View {
                 }
 
                 if let actionLog, shouldShowActionCard(for: actionLog) {
-                    ActionResultCardView(
-                        log: actionLog,
-                        onPrimaryAction: { onPrimaryAction(actionLog) }
-                    )
-                        .padding(.top, 2)
+                    Group {
+                        ActionResultCardView(
+                            log: actionLog,
+                            onPrimaryAction: { onPrimaryAction(actionLog) }
+                        )
+                        .transition(.opacity)
+                    }
+                    .padding(.top, 2)
+                    .animation(.easeInOut(duration: 0.22), value: actionLog.executionStatus)
                 }
             }
             .frame(maxWidth: .infinity, alignment: isUserMessage ? .trailing : .leading)
