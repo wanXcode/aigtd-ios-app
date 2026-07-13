@@ -42,6 +42,249 @@ struct ReminderCreateInput: Sendable {
     let preferredListName: String?
 }
 
+struct ReschedulePlanItem: Codable, Hashable, Sendable {
+    let reminderID: String
+    let title: String
+    let listTitle: String
+    let dueDateISO8601: String
+}
+
+struct ReschedulePlan: Codable, Hashable, Sendable {
+    let scope: String
+    let scopeLabel: String
+    let strategy: String
+    let ordering: String
+    let windowDays: Int
+    let startDateISO8601: String
+    let endDateISO8601: String
+    let items: [ReschedulePlanItem]
+}
+
+struct ReschedulePlanner {
+    func makePlan(
+        entities: [String: String],
+        reminderItems: [ReminderItemInfo],
+        now: Date = .now
+    ) -> ReschedulePlan? {
+        let openItems = reminderItems
+            .filter { $0.isCompleted == false }
+            .sorted(by: reminderSort)
+        guard openItems.isEmpty == false else { return nil }
+
+        let scope = nonEmptyValue(entities["scope"]) ?? "current_open_items"
+        let scopeLabel = nonEmptyValue(entities["scope_label"]) ?? scopeLabel(for: scope)
+        let sourceText = nonEmptyValue(entities["source_text"]) ?? ""
+        let windowDays = inferredWindowDays(
+            entityValue: entities["window_days"],
+            sourceText: sourceText
+        )
+        let startDate = inferredStartDate(
+            entityValue: entities["start_date"],
+            sourceText: sourceText,
+            now: now
+        )
+        let strategy = nonEmptyValue(entities["strategy"]) ?? "spread_within_window"
+        let ordering = nonEmptyValue(entities["ordering"]) ?? "sequential"
+
+        let selectedItems = selectItems(
+            for: scope,
+            target: nonEmptyValue(entities["target"]),
+            from: openItems,
+            now: now
+        )
+        guard selectedItems.isEmpty == false else { return nil }
+
+        let offsets = dueDayOffsets(
+            itemCount: selectedItems.count,
+            windowDays: windowDays
+        )
+        let calendar = Calendar.current
+        let formatter = ISO8601DateFormatter()
+        let plannedItems = zip(selectedItems, offsets).compactMap { item, offset -> ReschedulePlanItem? in
+            guard let dueDate = calendar.date(byAdding: .day, value: offset, to: startDate) else {
+                return nil
+            }
+            return ReschedulePlanItem(
+                reminderID: item.id,
+                title: item.title,
+                listTitle: item.listTitle,
+                dueDateISO8601: formatter.string(from: dueDate)
+            )
+        }
+        guard plannedItems.isEmpty == false else { return nil }
+
+        let endDate = calendar.date(byAdding: .day, value: max(windowDays - 1, 0), to: startDate) ?? startDate
+        return ReschedulePlan(
+            scope: scope,
+            scopeLabel: scopeLabel,
+            strategy: strategy,
+            ordering: ordering,
+            windowDays: windowDays,
+            startDateISO8601: formatter.string(from: startDate),
+            endDateISO8601: formatter.string(from: endDate),
+            items: plannedItems
+        )
+    }
+
+    private func selectItems(
+        for scope: String,
+        target: String?,
+        from items: [ReminderItemInfo],
+        now: Date
+    ) -> [ReminderItemInfo] {
+        if let target, target.isEmpty == false, isGenericReference(target) == false {
+            let normalizedTarget = normalize(target)
+            return items.filter { item in
+                let normalizedTitle = normalize(item.title)
+                return normalizedTitle == normalizedTarget ||
+                    normalizedTitle.contains(normalizedTarget) ||
+                    normalizedTarget.contains(normalizedTitle)
+            }
+        }
+
+        if scope == "overdue_open_items" {
+            return items.filter { item in
+                guard let dueDate = item.dueDate else { return false }
+                return dueDate < now
+            }
+        }
+
+        if scope.hasPrefix("list:") {
+            let listName = String(scope.dropFirst("list:".count))
+            return items.filter { normalize($0.listTitle) == normalize(listName) }
+        }
+
+        return items
+    }
+
+    private func inferredWindowDays(entityValue: String?, sourceText: String) -> Int {
+        if let entityValue,
+           let days = Int(entityValue),
+           days > 0 {
+            return min(days, 30)
+        }
+        if sourceText.contains("2周") || sourceText.contains("两周") || sourceText.contains("二周") {
+            return 14
+        }
+        if sourceText.contains("1周") || sourceText.contains("一周") || sourceText.contains("这周") {
+            return 7
+        }
+        if let days = inferredDayCount(from: sourceText) {
+            return min(days, 30)
+        }
+        return 14
+    }
+
+    private func inferredStartDate(entityValue: String?, sourceText: String, now: Date) -> Date {
+        let formatter = ISO8601DateFormatter()
+        if let entityValue,
+           let parsed = formatter.date(from: entityValue) {
+            return futureExecutionDate(for: parsed, now: now)
+        }
+
+        let calendar = Calendar.current
+        let baseDate: Date
+        if sourceText.contains("今天") && sourceText.contains("开始") {
+            baseDate = now
+        } else {
+            baseDate = calendar.date(byAdding: .day, value: 1, to: now) ?? now
+        }
+        return futureExecutionDate(for: baseDate, now: now)
+    }
+
+    private func futureExecutionDate(for date: Date, now: Date) -> Date {
+        let normalized = normalizeToPreferredExecutionTime(date)
+        guard normalized < now else { return normalized }
+        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: now) ?? now
+        return normalizeToPreferredExecutionTime(tomorrow)
+    }
+
+    private func normalizeToPreferredExecutionTime(_ date: Date) -> Date {
+        let calendar = Calendar.current
+        let components = calendar.dateComponents([.year, .month, .day], from: date)
+        return calendar.date(
+            from: DateComponents(
+                timeZone: .current,
+                year: components.year,
+                month: components.month,
+                day: components.day,
+                hour: 9,
+                minute: 0,
+                second: 0
+            )
+        ) ?? date
+    }
+
+    private func dueDayOffsets(itemCount: Int, windowDays: Int) -> [Int] {
+        guard itemCount > 0 else { return [] }
+        if itemCount == 1 { return [0] }
+
+        let maxOffset = max(windowDays - 1, 0)
+        if maxOffset == 0 { return Array(repeating: 0, count: itemCount) }
+
+        return (0..<itemCount).map { index in
+            Int(round(Double(index) * Double(maxOffset) / Double(itemCount - 1)))
+        }
+    }
+
+    private func scopeLabel(for scope: String) -> String {
+        if scope == "overdue_open_items" {
+            return "已过期事项"
+        }
+        if scope.hasPrefix("list:") {
+            return String(scope.dropFirst("list:".count))
+        }
+        return "当前未完成事项"
+    }
+
+    private func inferredDayCount(from text: String) -> Int? {
+        let pattern = #"(\d+)\s*天"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return nil
+        }
+        let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
+        guard let match = regex.firstMatch(in: text, range: nsRange),
+              match.numberOfRanges > 1,
+              let range = Range(match.range(at: 1), in: text) else {
+            return nil
+        }
+        return Int(String(text[range]))
+    }
+
+    private func reminderSort(lhs: ReminderItemInfo, rhs: ReminderItemInfo) -> Bool {
+        switch (lhs.dueDate, rhs.dueDate) {
+        case let (left?, right?):
+            if left != right { return left < right }
+        case (_?, nil):
+            return true
+        case (nil, _?):
+            return false
+        case (nil, nil):
+            break
+        }
+
+        if lhs.listTitle != rhs.listTitle {
+            return lhs.listTitle.localizedCompare(rhs.listTitle) == .orderedAscending
+        }
+        return lhs.title.localizedCompare(rhs.title) == .orderedAscending
+    }
+
+    private func normalize(_ text: String) -> String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private func nonEmptyValue(_ text: String?) -> String? {
+        guard let text else { return nil }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func isGenericReference(_ text: String) -> Bool {
+        let hints = ["当前这条", "这条", "那条", "这些", "这些任务", "当前未完成事项"]
+        return hints.contains(where: { text.contains($0) })
+    }
+}
+
 private struct ReminderLookupCandidate: Sendable {
     let identifier: String
     let normalizedTitle: String
@@ -253,6 +496,49 @@ struct ReminderStoreService {
     }
 
     @discardableResult
+    func updateReminderDueDate(identifier: String, dueDate: Date?) throws -> String {
+        let store = try authorizedStore()
+        store.refreshSourcesIfNecessary()
+
+        guard let reminder = store.calendarItem(withIdentifier: identifier) as? EKReminder else {
+            throw ReminderStoreError.reminderNotFound(identifier)
+        }
+
+        if let dueDate {
+            reminder.dueDateComponents = Calendar.current.dateComponents(
+                in: .current,
+                from: dueDate
+            )
+        } else {
+            reminder.dueDateComponents = nil
+        }
+        try store.save(reminder, commit: true)
+        return reminder.calendarItemIdentifier
+    }
+
+    @discardableResult
+    func updateReminderDueDate(targetText: String, dueDate: Date?) async throws -> String {
+        let store = try authorizedStore()
+        store.refreshSourcesIfNecessary()
+
+        guard let reminderID = try await findReminderIdentifier(matching: targetText, store: store),
+              let reminder = store.calendarItem(withIdentifier: reminderID) as? EKReminder else {
+            throw ReminderStoreError.reminderNotFound(targetText)
+        }
+
+        if let dueDate {
+            reminder.dueDateComponents = Calendar.current.dateComponents(
+                in: .current,
+                from: dueDate
+            )
+        } else {
+            reminder.dueDateComponents = nil
+        }
+        try store.save(reminder, commit: true)
+        return reminder.calendarItemIdentifier
+    }
+
+    @discardableResult
     func deleteReminder(identifier: String) throws -> String {
         let store = try authorizedStore()
         store.refreshSourcesIfNecessary()
@@ -315,10 +601,18 @@ struct ReminderStoreService {
         let candidates = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[ReminderLookupCandidate], Error>) in
             store.fetchReminders(matching: predicate) { reminders in
                 let mapped = (reminders ?? []).map { reminder in
-                    ReminderLookupCandidate(
+                    let title = reminder.title ?? "未命名任务"
+                    let dueLabel = reminder.dueDateComponents
+                        .flatMap { Calendar.current.date(from: $0) }
+                        .map { $0.formatted(date: .abbreviated, time: .shortened) }
+                    let context = [dueLabel, reminder.calendar?.title]
+                        .compactMap { $0 }
+                        .filter { $0.isEmpty == false }
+                        .joined(separator: "，")
+                    return ReminderLookupCandidate(
                         identifier: reminder.calendarItemIdentifier,
-                        normalizedTitle: normalize(reminder.title),
-                        displayTitle: reminder.title
+                        normalizedTitle: normalize(title),
+                        displayTitle: context.isEmpty ? title : "\(title)（\(context)）"
                     )
                 }
                 continuation.resume(returning: mapped)
@@ -328,13 +622,28 @@ struct ReminderStoreService {
         let normalizedTarget = normalize(trimmed)
         let quotedTarget = quotedText(in: trimmed).map(normalize)
 
-        if let quotedTarget,
-           let exactQuoted = candidates.first(where: { $0.normalizedTitle == quotedTarget }) {
-            return exactQuoted.identifier
+        if let quotedTarget {
+            let exactQuoted = candidates.filter { $0.normalizedTitle == quotedTarget }
+            if exactQuoted.count == 1 {
+                return exactQuoted[0].identifier
+            }
+            if exactQuoted.count > 1 {
+                throw ReminderStoreError.reminderAmbiguous(
+                    targetText,
+                    exactQuoted.map(\.displayTitle)
+                )
+            }
         }
 
-        if let exact = candidates.first(where: { $0.normalizedTitle == normalizedTarget }) {
-            return exact.identifier
+        let exactMatches = candidates.filter { $0.normalizedTitle == normalizedTarget }
+        if exactMatches.count == 1 {
+            return exactMatches[0].identifier
+        }
+        if exactMatches.count > 1 {
+            throw ReminderStoreError.reminderAmbiguous(
+                targetText,
+                exactMatches.map(\.displayTitle)
+            )
         }
 
         let containsMatches = candidates.filter { candidate in

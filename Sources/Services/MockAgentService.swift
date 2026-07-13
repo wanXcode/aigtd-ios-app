@@ -2,8 +2,10 @@ import Foundation
 
 enum MockAgentIntent: String, Sendable {
     case createReminder = "create_reminder"
+    case updateReminder = "update_reminder"
     case createList = "create_list"
     case summarizeLists = "summarize_lists"
+    case planReschedule = "plan_reschedule"
     case captureMessage = "capture_message"
     case moveReminder = "move_reminder"
     case completeReminder = "complete_reminder"
@@ -90,23 +92,6 @@ struct MockAgentService {
     ) -> MockAgentResult {
         let preferredUserAddress = resolvedUserAddress(from: agentContext)
 
-        if let reminder = detectReminderCreation(from: content, reminderLists: reminderLists) {
-            let action = MockAgentAction(
-                intent: .createReminder,
-                title: "创建任务",
-                entities: reminder.entities,
-                requiresConfirmation: false
-            )
-            return makeResult(
-                reply: reminder.reply,
-                summary: reminder.summary,
-                action: action,
-                confidence: reminder.confidence,
-                followUpPrompt: reminder.followUpPrompt,
-                matchedSignals: reminder.signals
-            )
-        }
-
         if isCasualProbe(content) {
             let action = MockAgentAction(
                 intent: .captureMessage,
@@ -123,6 +108,49 @@ struct MockAgentService {
                 confidence: 0.96,
                 followUpPrompt: "比如你可以直接说：明天提醒我给张闯回信。",
                 matchedSignals: ["casual_probe"]
+            )
+        }
+
+        if let update = detectReminderUpdate(from: content) {
+            let action = MockAgentAction(
+                intent: .updateReminder,
+                title: "修改任务时间",
+                entities: [
+                    "target": update.target,
+                    "due_date": update.dueDateISO8601,
+                    "source_text": content
+                ],
+                requiresConfirmation: false
+            )
+            return makeResult(
+                reply: "我来帮你修改这条任务的时间。",
+                summary: "准备修改任务时间：\(update.target)",
+                action: action,
+                confidence: update.confidence,
+                followUpPrompt: nil,
+                matchedSignals: update.signals
+            )
+        }
+
+        if let reschedule = detectReschedule(
+            from: content,
+            reminderLists: reminderLists,
+            reminderItems: reminderItems,
+            preferredUserAddress: preferredUserAddress
+        ) {
+            let action = MockAgentAction(
+                intent: .planReschedule,
+                title: "重排任务时间",
+                entities: reschedule.entities,
+                requiresConfirmation: false
+            )
+            return makeResult(
+                reply: reschedule.reply,
+                summary: reschedule.summary,
+                action: action,
+                confidence: reschedule.confidence,
+                followUpPrompt: reschedule.followUpPrompt,
+                matchedSignals: reschedule.signals
             )
         }
 
@@ -181,6 +209,23 @@ struct MockAgentService {
                 confidence: movement.confidence,
                 followUpPrompt: "如果这类事情以后都放这里，我也可以顺手帮你把清单整理一下。",
                 matchedSignals: movement.signals
+            )
+        }
+
+        if let reminder = detectReminderCreation(from: content, reminderLists: reminderLists) {
+            let action = MockAgentAction(
+                intent: .createReminder,
+                title: "创建任务",
+                entities: reminder.entities,
+                requiresConfirmation: false
+            )
+            return makeResult(
+                reply: reminder.reply,
+                summary: reminder.summary,
+                action: action,
+                confidence: reminder.confidence,
+                followUpPrompt: reminder.followUpPrompt,
+                matchedSignals: reminder.signals
             )
         }
 
@@ -388,9 +433,7 @@ struct MockAgentService {
             "记一个待办", "记个待办", "帮我记一个待办", "帮我记个待办"
         ]
         let hasCreationKeyword = matchesAny(trimmed.lowercased(), keywords: creationKeywords.map { $0.lowercased() })
-        let hasFutureSignal = matchesAny(trimmed, keywords: ["明天", "今天", "今晚", "上午", "下午", "晚上", "后天", "下周", "周一", "周二", "周三", "周四", "周五", "周六", "周日", "周天"])
-
-        guard hasCreationKeyword || hasFutureSignal else {
+        guard hasCreationKeyword else {
             return nil
         }
 
@@ -525,25 +568,65 @@ struct MockAgentService {
     private func detectDueDate(from text: String) -> Date? {
         let calendar = Calendar.current
         let now = Date()
+        let baseDate: Date?
 
         if text.contains("今天") || text.contains("今日") || text.contains("今晚") {
-            return now
-        }
-        if text.contains("明天") || text.contains("明日") {
-            return calendar.date(byAdding: .day, value: 1, to: now)
-        }
-        if text.contains("后天") {
-            return calendar.date(byAdding: .day, value: 2, to: now)
-        }
-
-        if let explicit = parseExplicitMonthDay(from: text) {
-            return explicit
-        }
-        if let weekday = parseWeekday(from: text) {
-            return weekday
+            baseDate = now
+        } else if text.contains("后天") {
+            baseDate = calendar.date(byAdding: .day, value: 2, to: now)
+        } else if text.contains("明天") || text.contains("明日") {
+            baseDate = calendar.date(byAdding: .day, value: 1, to: now)
+        } else if let explicit = parseExplicitMonthDay(from: text) {
+            baseDate = explicit
+        } else if let weekday = parseWeekday(from: text) {
+            baseDate = weekday
+        } else {
+            baseDate = nil
         }
 
-        return nil
+        return baseDate.map { applyingRequestedTime(from: text, to: $0) }
+    }
+
+    private func applyingRequestedTime(from text: String, to date: Date) -> Date {
+        let timeMatch = firstMatch(
+            in: text,
+            pattern: #"(\d{1,2})\s*(?:点|时)(?:\s*(\d{1,2})\s*分?)?"#
+        ) ?? firstMatch(
+            in: text,
+            pattern: #"(\d{1,2})\s*[:：]\s*(\d{1,2})"#
+        )
+
+        var hour = timeMatch?.first.flatMap(Int.init)
+        let minute = timeMatch.flatMap { $0.count > 1 ? Int($0[1]) : nil } ?? 0
+        if hour == nil {
+            if matchesAny(text, keywords: ["晚上", "今晚", "明晚"]) {
+                hour = 20
+            } else if text.contains("下午") {
+                hour = 15
+            } else {
+                hour = 9
+            }
+        }
+
+        if let parsedHour = hour {
+            if matchesAny(text, keywords: ["下午", "晚上", "今晚", "明晚"]), parsedHour < 12 {
+                hour = parsedHour + 12
+            } else if matchesAny(text, keywords: ["上午", "早上", "早晨", "明早"]), parsedHour == 12 {
+                hour = 0
+            }
+        }
+
+        let day = Calendar.current.dateComponents([.year, .month, .day], from: date)
+        return Calendar.current.date(
+            from: DateComponents(
+                timeZone: .current,
+                year: day.year,
+                month: day.month,
+                day: day.day,
+                hour: min(max(hour ?? 9, 0), 23),
+                minute: min(max(minute, 0), 59)
+            )
+        ) ?? date
     }
 
     private func parseExplicitMonthDay(from text: String) -> Date? {
@@ -591,12 +674,15 @@ struct MockAgentService {
         let calendar = Calendar.current
         let now = Date()
         let currentWeekday = calendar.component(.weekday, from: now)
-        var delta = targetWeekday - currentWeekday
-        if delta <= 0 {
-            delta += 7
-        }
+        let delta: Int
         if nextWeek {
-            delta += 7
+            let daysUntilNextMonday = (9 - currentWeekday) % 7
+            let normalizedDaysUntilNextMonday = daysUntilNextMonday == 0 ? 7 : daysUntilNextMonday
+            let targetOffsetFromMonday = (targetWeekday + 5) % 7
+            delta = normalizedDaysUntilNextMonday + targetOffsetFromMonday
+        } else {
+            let nextOccurrence = (targetWeekday - currentWeekday + 7) % 7
+            delta = nextOccurrence == 0 ? 7 : nextOccurrence
         }
         return calendar.date(byAdding: .day, value: delta, to: now)
     }
@@ -617,7 +703,9 @@ struct MockAgentService {
             #"(?:下周)?周[一二三四五六日天]"#,
             #"\d{4}[-/.年]\d{1,2}[-/.月]\d{1,2}日?"#,
             #"\d{1,2}[-/.月]\d{1,2}日?"#,
-            #"上午"#, #"下午"#, #"晚上"#
+            #"\d{1,2}\s*(?:点|时)(?:\s*\d{1,2}\s*分?)?"#,
+            #"\d{1,2}\s*[:：]\s*\d{1,2}"#,
+            #"上午"#, #"下午"#, #"晚上"#, #"早上"#, #"早晨"#
         ]
         for pattern in metaPatterns {
             title = replacingRegex(pattern, in: title, with: " ")
@@ -850,8 +938,170 @@ struct MockAgentService {
         return value.trimmingCharacters(in: CharacterSet(charactersIn: " ，,。；;:：").union(.whitespacesAndNewlines))
     }
 
+    private func detectReminderUpdate(
+        from text: String
+    ) -> (target: String, dueDateISO8601: String, confidence: Double, signals: [String])? {
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let updateSignals = ["改到", "调整到", "延后到", "推迟到", "延期到"]
+        guard matchesAny(normalized, keywords: updateSignals),
+              let dueDate = detectDueDate(from: normalized) else {
+            return nil
+        }
+
+        let broadScopeSignals = ["所有", "全部", "这些", "未完成任务", "未完成事项", "收集箱里", "清单里"]
+        guard matchesAny(normalized, keywords: broadScopeSignals) == false else {
+            return nil
+        }
+
+        let target = updateTarget(in: normalized) ?? "当前这条"
+        return (
+            target: target,
+            dueDateISO8601: ISO8601DateFormatter().string(from: dueDate),
+            confidence: 0.94,
+            signals: ["update_reminder", "single_target", "due_date"]
+        )
+    }
+
+    private func updateTarget(in text: String) -> String? {
+        if let quoted = quotedText(in: text) {
+            return quoted
+        }
+        if matchesAny(text, keywords: ["它", "这条", "那条", "上一条", "刚才", "刚刚", "再改到"]) {
+            return "当前这条"
+        }
+
+        let patterns = [
+            #"把\s*(.+?)\s*(?:改到|调整到|延后到|推迟到|延期到)"#,
+            #"将\s*(.+?)\s*(?:改到|调整到|延后到|推迟到|延期到)"#
+        ]
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern),
+                  let match = regex.firstMatch(
+                    in: text,
+                    range: NSRange(text.startIndex..<text.endIndex, in: text)
+                  ),
+                  match.numberOfRanges > 1,
+                  let range = Range(match.range(at: 1), in: text) else {
+                continue
+            }
+            let value = String(text[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if value.isEmpty == false {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private func detectReschedule(
+        from text: String,
+        reminderLists: [ReminderListInfo],
+        reminderItems: [ReminderItemInfo],
+        preferredUserAddress: String
+    ) -> (
+        entities: [String: String],
+        reply: String,
+        summary: String,
+        confidence: Double,
+        followUpPrompt: String?,
+        signals: [String]
+    )? {
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalized.isEmpty == false else { return nil }
+
+        let planningKeywords = [
+            "改时间", "重新排", "重排", "重新安排", "顺延", "延期",
+            "往后排", "重新规划", "重新排一下", "在后面的", "依次",
+            "未来两周", "未来2周", "后面2周", "后面两周"
+        ]
+        let timeWindowKeywords = ["周内", "天内", "明天开始", "下周", "未来", "后面"]
+        guard matchesAny(normalized, keywords: planningKeywords) ||
+                (matchesAny(normalized, keywords: ["改到"]) && matchesAny(normalized, keywords: timeWindowKeywords)) else {
+            return nil
+        }
+
+        let explicitList = explicitlyMentionedListName(in: normalized, reminderLists: reminderLists)
+        let openItems = reminderItems.filter { $0.isCompleted == false }
+        guard openItems.isEmpty == false else {
+            return nil
+        }
+
+        let scope: String
+        let scopeLabel: String
+        if matchesAny(normalized, keywords: ["过期", "逾期"]) {
+            scope = "overdue_open_items"
+            scopeLabel = "已过期事项"
+        } else if let explicitList {
+            scope = "list:\(explicitList)"
+            scopeLabel = explicitList
+        } else {
+            scope = "current_open_items"
+            scopeLabel = "当前未完成事项"
+        }
+
+        let windowDays = inferredWindowDays(from: normalized)
+        let targetCount: Int
+        switch scope {
+        case "overdue_open_items":
+            targetCount = openItems.filter { item in
+                if let dueDate = item.dueDate {
+                    return dueDate < Date()
+                }
+                return false
+            }.count
+        case _ where explicitList != nil:
+            targetCount = openItems.filter { $0.listTitle == explicitList }.count
+        default:
+            targetCount = openItems.count
+        }
+        guard targetCount > 0 else { return nil }
+
+        let entities: [String: String] = [
+            "phase": "plan",
+            "scope": scope,
+            "scope_label": scopeLabel,
+            "strategy": "spread_within_window",
+            "ordering": "sequential",
+            "window_days": String(windowDays),
+            "start_date": "",
+            "plan_json": "",
+            "source_text": normalized
+        ]
+
+        let windowLabel = windowDays >= 14 ? "未来 2 周" : "接下来 \(windowDays) 天"
+        return (
+            entities: entities,
+            reply: "我先按\(windowLabel)帮你排一个方案，你看下合不合适。",
+            summary: "准备重排 \(scopeLabel) 的 \(targetCount) 条任务",
+            confidence: 0.88,
+            followUpPrompt: "如果你想改成更紧一点，或者只重排过期事项，也可以继续说。",
+            signals: ["plan_reschedule", scope, "window_days:\(windowDays)", "sequential", preferredUserAddress]
+        )
+    }
+
+    private func inferredWindowDays(from text: String) -> Int {
+        if matchesAny(text, keywords: ["2周", "两周", "二周"]) {
+            return 14
+        }
+        if matchesAny(text, keywords: ["1周", "一周", "这周"]) {
+            return 7
+        }
+        if let match = firstMatch(in: text, pattern: #"(\d+)\s*天"#)?.first,
+           let days = Int(match),
+           days > 0 {
+            return min(days, 30)
+        }
+        return 14
+    }
+
     private func detectMove(from text: String) -> (target: String, destinationList: String, confidence: Double, signals: [String])? {
         guard matchesAny(text, keywords: ["移到", "移去", "放到", "放进", "转到", "改到", "切到"]) else {
+            return nil
+        }
+
+        let timePlanningKeywords = [
+            "明天", "后天", "下周", "周内", "天内", "未来", "后面", "依次", "顺延", "延期", "时间"
+        ]
+        guard matchesAny(text, keywords: timePlanningKeywords) == false else {
             return nil
         }
 
@@ -942,7 +1192,9 @@ struct MockAgentService {
             return quoted
         }
 
-        if text.contains("这条") || text.contains("这件事") || text.contains("这个") {
+        if matchesAny(text, keywords: [
+            "它", "这条", "那条", "这件事", "这个", "上一条", "上一个", "刚才", "刚刚", "再改"
+        ]) {
             return "当前这条"
         }
 

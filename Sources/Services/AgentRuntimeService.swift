@@ -24,12 +24,27 @@ struct AgentRuntimeService {
         configuration: AgentModelConfiguration?,
         agentContext: AIGTDAgentRuntimeContext? = nil,
         conversationHistory: [AgentConversationTurn] = [],
+        traceID: UUID? = nil,
         onTextUpdate: (@MainActor @Sendable (String) async -> Void)? = nil
     ) async -> MockAgentResult {
+        let activeTraceID = AgentTraceService.shared.beginTrace(traceID: traceID ?? UUID())
+        AgentTraceService.shared.record(
+            traceID: activeTraceID,
+            stage: .inputReceived,
+            status: .success,
+            summaryText: content,
+            structure: ["conversation_turns:\(conversationHistory.count)", "reminder_items:\(reminderItems.count)"]
+        )
         guard let configuration,
               configuration.provider.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
               configuration.modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
               configuration.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+            AgentTraceService.shared.record(
+                traceID: activeTraceID,
+                stage: .remoteRequestStarted,
+                status: .skipped,
+                errorCategory: "invalid_configuration"
+            )
             let message = readableRemoteFailureMessage(from: AgentRuntimeError.invalidConfiguration)
             return MockAgentResult(
                 reply: message.reply,
@@ -49,10 +64,19 @@ struct AgentRuntimeService {
                 configuration: configuration,
                 agentContext: agentContext,
                 conversationHistory: conversationHistory,
+                traceID: activeTraceID,
                 onTextUpdate: onTextUpdate
             )
         } catch {
             let message = readableRemoteFailureMessage(from: error)
+            AgentTraceService.shared.record(
+                traceID: activeTraceID,
+                stage: .structuredParseCompleted,
+                status: .failure,
+                errorCategory: diagnosticErrorCategory(for: error),
+                userVisibleError: message.summary,
+                knownSecrets: [configuration.apiKey]
+            )
             return MockAgentResult(
                 reply: message.reply,
                 summary: message.summary,
@@ -71,11 +95,14 @@ struct AgentRuntimeService {
             throw AgentRuntimeError.invalidConfiguration
         }
 
+        let traceID = AgentTraceService.shared.beginTrace()
         let request = try makeHealthCheckRequest(configuration: configuration)
         let sessionConfiguration = URLSessionConfiguration.ephemeral
         sessionConfiguration.timeoutIntervalForRequest = min(configuration.timeoutSeconds, 15)
         sessionConfiguration.timeoutIntervalForResource = min(configuration.timeoutSeconds, 15)
 
+        let requestStartedAt = Date()
+        AgentTraceService.shared.record(traceID: traceID, stage: .remoteRequestStarted, status: .success)
         let (data, response) = try await URLSession(configuration: sessionConfiguration).data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw AgentRuntimeError.invalidResponse
@@ -85,13 +112,24 @@ struct AgentRuntimeService {
                 endpoint: normalizedEndpoint(from: configuration),
                 wireAPI: normalizedWireAPI(from: configuration).rawValue,
                 statusCode: httpResponse.statusCode,
-                data: data
+                data: data,
+                knownSecrets: [configuration.apiKey]
             )
         }
+        AgentTraceService.shared.record(
+            traceID: traceID,
+            stage: .remoteResponseReceived,
+            status: (200..<300).contains(httpResponse.statusCode) ? .success : .failure,
+            durationMilliseconds: elapsedMilliseconds(since: requestStartedAt),
+            summaryText: String(data: data, encoding: .utf8) ?? "<binary response>",
+            structure: responseStructure(from: data),
+            errorCategory: (200..<300).contains(httpResponse.statusCode) ? nil : "http_status",
+            knownSecrets: [configuration.apiKey]
+        )
         guard (200..<300).contains(httpResponse.statusCode) else {
             throw AgentRuntimeError.httpStatus(
                 httpResponse.statusCode,
-                responseBodySummary(from: data)
+                responseBodySummary(from: data, knownSecrets: [configuration.apiKey])
             )
         }
 
@@ -110,6 +148,7 @@ struct AgentRuntimeService {
         configuration: AgentModelConfiguration,
         agentContext: AIGTDAgentRuntimeContext?,
         conversationHistory: [AgentConversationTurn],
+        traceID: UUID,
         onTextUpdate: (@MainActor @Sendable (String) async -> Void)?
     ) async throws -> MockAgentResult {
         if normalizedWireAPI(from: configuration) == .responses {
@@ -120,6 +159,7 @@ struct AgentRuntimeService {
                 configuration: configuration,
                 agentContext: agentContext,
                 conversationHistory: conversationHistory,
+                traceID: traceID,
                 onTextUpdate: onTextUpdate
             )
         }
@@ -137,6 +177,8 @@ struct AgentRuntimeService {
         sessionConfiguration.timeoutIntervalForRequest = configuration.timeoutSeconds
         sessionConfiguration.timeoutIntervalForResource = configuration.timeoutSeconds
 
+        let requestStartedAt = Date()
+        AgentTraceService.shared.record(traceID: traceID, stage: .remoteRequestStarted, status: .success)
         let (data, response) = try await URLSession(configuration: sessionConfiguration).data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw AgentRuntimeError.invalidResponse
@@ -146,13 +188,24 @@ struct AgentRuntimeService {
                 endpoint: endpoint,
                 wireAPI: normalizedWireAPI(from: configuration).rawValue,
                 statusCode: httpResponse.statusCode,
-                data: data
+                data: data,
+                knownSecrets: [configuration.apiKey]
             )
         }
+        AgentTraceService.shared.record(
+            traceID: traceID,
+            stage: .remoteResponseReceived,
+            status: (200..<300).contains(httpResponse.statusCode) ? .success : .failure,
+            durationMilliseconds: elapsedMilliseconds(since: requestStartedAt),
+            summaryText: String(data: data, encoding: .utf8) ?? "<binary response>",
+            structure: responseStructure(from: data),
+            errorCategory: (200..<300).contains(httpResponse.statusCode) ? nil : "http_status",
+            knownSecrets: [configuration.apiKey]
+        )
         guard (200..<300).contains(httpResponse.statusCode) else {
             throw AgentRuntimeError.httpStatus(
                 httpResponse.statusCode,
-                responseBodySummary(from: data)
+                responseBodySummary(from: data, knownSecrets: [configuration.apiKey])
             )
         }
 
@@ -162,14 +215,31 @@ struct AgentRuntimeService {
         } catch let runtimeError as AgentRuntimeError {
             switch runtimeError {
             case .invalidPayload:
-                throw AgentRuntimeError.invalidPayload(responseBodySummary(from: data))
+                throw AgentRuntimeError.invalidPayload(
+                    responseBodySummary(from: data, knownSecrets: [configuration.apiKey])
+                )
             default:
                 throw runtimeError
             }
         }
         if let structuredResult = makeStructuredResult(from: returnedText) {
+            AgentTraceService.shared.record(
+                traceID: traceID,
+                stage: .structuredParseCompleted,
+                status: .success,
+                actionType: structuredResult.actionType,
+                summaryText: returnedText,
+                structure: ["structured_action"]
+            )
             return structuredResult
         }
+        AgentTraceService.shared.record(
+            traceID: traceID,
+            stage: .structuredParseCompleted,
+            status: .skipped,
+            summaryText: returnedText,
+            structure: ["natural_language_reply"]
+        )
         if let onTextUpdate {
             await onTextUpdate(returnedText.trimmingCharacters(in: .whitespacesAndNewlines))
         }
@@ -190,6 +260,7 @@ struct AgentRuntimeService {
         configuration: AgentModelConfiguration,
         agentContext: AIGTDAgentRuntimeContext?,
         conversationHistory: [AgentConversationTurn],
+        traceID: UUID,
         onTextUpdate: (@MainActor @Sendable (String) async -> Void)?
     ) async throws -> MockAgentResult {
         let endpoint = normalizedEndpoint(from: configuration)
@@ -206,6 +277,8 @@ struct AgentRuntimeService {
         sessionConfiguration.timeoutIntervalForRequest = configuration.timeoutSeconds
         sessionConfiguration.timeoutIntervalForResource = configuration.timeoutSeconds
 
+        let requestStartedAt = Date()
+        AgentTraceService.shared.record(traceID: traceID, stage: .remoteRequestStarted, status: .success)
         let (bytes, response) = try await URLSession(configuration: sessionConfiguration).bytes(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw AgentRuntimeError.invalidResponse
@@ -271,24 +344,58 @@ struct AgentRuntimeService {
                 endpoint: endpoint,
                 wireAPI: normalizedWireAPI(from: configuration).rawValue,
                 statusCode: httpResponse.statusCode,
-                body: rawBody
+                body: rawBody,
+                knownSecrets: [configuration.apiKey]
             )
         }
+        AgentTraceService.shared.record(
+            traceID: traceID,
+            stage: .remoteResponseReceived,
+            status: (200..<300).contains(httpResponse.statusCode) ? .success : .failure,
+            durationMilliseconds: elapsedMilliseconds(since: requestStartedAt),
+            summaryText: rawBody,
+            structure: ["server_sent_events"],
+            errorCategory: (200..<300).contains(httpResponse.statusCode) ? nil : "http_status",
+            knownSecrets: [configuration.apiKey]
+        )
 
         guard (200..<300).contains(httpResponse.statusCode) else {
             throw AgentRuntimeError.httpStatus(
                 httpResponse.statusCode,
-                rawBody.isEmpty ? lastPayloadSummary : rawBody
+                AgentDiagnosticRedactor.sanitize(
+                    rawBody.isEmpty ? lastPayloadSummary : rawBody,
+                    knownSecrets: [configuration.apiKey]
+                )
             )
         }
 
         let resolvedText = latestResolvedText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard resolvedText.isEmpty == false else {
-            throw AgentRuntimeError.invalidPayload(rawBody.isEmpty ? lastPayloadSummary : rawBody)
+            throw AgentRuntimeError.invalidPayload(
+                AgentDiagnosticRedactor.sanitize(
+                    rawBody.isEmpty ? lastPayloadSummary : rawBody,
+                    knownSecrets: [configuration.apiKey]
+                )
+            )
         }
         if let structuredResult = makeStructuredResult(from: resolvedText) {
+            AgentTraceService.shared.record(
+                traceID: traceID,
+                stage: .structuredParseCompleted,
+                status: .success,
+                actionType: structuredResult.actionType,
+                summaryText: resolvedText,
+                structure: ["structured_action", "streaming"]
+            )
             return structuredResult
         }
+        AgentTraceService.shared.record(
+            traceID: traceID,
+            stage: .structuredParseCompleted,
+            status: .skipped,
+            summaryText: resolvedText,
+            structure: ["natural_language_reply", "streaming"]
+        )
         if let onTextUpdate {
             await onTextUpdate(resolvedText)
         }
@@ -371,7 +478,7 @@ struct AgentRuntimeService {
         你是 AIGTD，一个长期在线的个人事务管理助手。你现在在 iPhone App 里和用户直接对话。
 
         你的目标：
-        - 准确判断用户是否要创建任务、创建清单、查看事项、移动任务、完成任务，或只是普通聊天
+        - 准确判断用户是否要创建任务、创建清单、查看事项、重排任务时间、移动任务、完成任务，或只是普通聊天
         - 用好“最近对话窗口”来理解“刚才那条 / 上一条 / 你刚帮我建的那个”这种上下文指代
         - 先做结构化理解，再交给本地执行层落地
         - 对于会修改系统状态的动作，不要提前宣称“已经成功执行”
@@ -396,19 +503,24 @@ struct AgentRuntimeService {
 
         你必须返回一个单独的 JSON 对象，字段如下：
         {
-          "reply": "给用户看的简短草稿回复。若 intent 会修改系统状态，只能表达“我来处理”，不能宣称已经成功。",
+          "reply": "给用户看的简短草稿回复。若 intent 会修改系统状态，只能表达“我来处理”，不能宣称已经成功。若 intent 只是生成重排方案，可以直接说“我先排了个方案给你看”。",
           "summary": "内部摘要，简短明确",
           "confidence": 0 到 1 的小数,
           "followUpPrompt": "可选字符串，没有就填 null",
           "matchedSignals": ["命中的意图信号"],
           "action": {
-            "intent": "create_reminder | create_list | summarize_lists | capture_message | move_reminder | complete_reminder | delete_reminder | fallback",
+            "intent": "create_reminder | update_reminder | create_list | summarize_lists | plan_reschedule | capture_message | move_reminder | complete_reminder | delete_reminder | fallback",
             "title": "动作标题",
             "entities": {
               "title": "任务标题",
               "due_date": "ISO8601 时间字符串，没有就留空字符串",
               "preferred_list_name": "期望清单名，没有就留空字符串",
               "target": "要操作的任务标题，没有就留空字符串",
+              "scope": "重排范围，例如 current_open_items / overdue_open_items / list:收集箱",
+              "strategy": "重排策略，例如 spread_within_window",
+              "ordering": "排序方式，例如 sequential",
+              "window_days": "重排时间窗天数，没有就留空字符串",
+              "start_date": "重排起点 ISO8601，没有就留空字符串",
               "note": "备注，没有就留空字符串",
               "source_text": "用户原话"
             },
@@ -421,12 +533,17 @@ struct AgentRuntimeService {
         - 如果用户是在查看任务，就不要伪装成 create_reminder
         - 如果用户只是打招呼、试探、闲聊，intent 应为 capture_message 或 fallback
         - 如果用户说“删除刚才那条 / 删除上一条 / 删掉你刚建的那个”，要结合最近对话窗口，尽量把 target 填成明确任务标题
+        - 如果用户只修改一条明确任务或最近上下文任务的时间，例如“改到后天上午 10 点 / 把刚才那条改到周五”，必须输出 update_reminder
+        - 只有用户要同时安排多条任务、某个清单、所有未完成事项，或明确要求先给出一份重排方案时，才输出 plan_reschedule
+        - “改到”后面是清单名称时输出 move_reminder；后面是日期或时间时输出 update_reminder
         - 所有相对日期都必须以上面的“当前本地时间”和“当前时区”为准
         - “今天 / 明天 / 后天 / 下周X”必须换算成正确的未来 ISO8601 时间，不能瞎猜年份
         - 如果用户没有给具体时刻，但给了日期，due_date 默认用当地时间 09:00:00
         - 不要把相对日期解析到过去
         - 对 create_reminder，entities 至少包含 title、due_date、preferred_list_name、note、source_text
+        - 对 update_reminder，entities 至少包含 target、due_date、source_text；结合最近对话把“它 / 刚才那条”解析为明确任务标题
         - 对 create_list，entities 至少包含 list_name
+        - 对 plan_reschedule，entities 至少包含 scope、strategy、ordering、window_days、start_date、source_text
         - 对 move_reminder，entities 至少包含 target、destination_list
         - 对 complete_reminder，entities 至少包含 target
         - 对 delete_reminder，entities 至少包含 target
@@ -889,19 +1006,61 @@ struct AgentRuntimeService {
         )
     }
 
-    private func responseBodySummary(from data: Data) -> String {
+    private func responseBodySummary(from data: Data, knownSecrets: [String] = []) -> String {
         guard let text = String(data: data, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines),
               text.isEmpty == false else {
             return "无返回内容"
         }
 
-        if text.count > 1400 {
-            let head = String(text.prefix(900))
-            let tail = String(text.suffix(400))
+        let sanitized = AgentDiagnosticRedactor.sanitize(text, knownSecrets: knownSecrets)
+        if sanitized.count > 1400 {
+            let head = String(sanitized.prefix(900))
+            let tail = String(sanitized.suffix(400))
             return "\(head)\n…\n\(tail)"
         }
-        return text
+        return sanitized
+    }
+
+    private func elapsedMilliseconds(since start: Date) -> Int {
+        max(0, Int(Date().timeIntervalSince(start) * 1_000))
+    }
+
+    private func responseStructure(from data: Data) -> [String] {
+        guard let object = try? JSONSerialization.jsonObject(with: data) else {
+            return data.isEmpty ? ["empty"] : ["non_json"]
+        }
+        if let dictionary = object as? [String: Any] {
+            return dictionary.keys.sorted()
+        }
+        if object is [Any] {
+            return ["array"]
+        }
+        return ["scalar"]
+    }
+
+    private func diagnosticErrorCategory(for error: Error) -> String {
+        if let runtimeError = error as? AgentRuntimeError {
+            switch runtimeError {
+            case .invalidURL:
+                return "invalid_url"
+            case .invalidResponse:
+                return "invalid_response"
+            case .invalidPayload:
+                return "invalid_payload"
+            case .invalidConfiguration:
+                return "invalid_configuration"
+            case .httpStatus:
+                return "http_status"
+            }
+        }
+        if error is URLError {
+            return "network"
+        }
+        if error is DecodingError {
+            return "decoding"
+        }
+        return "unknown"
     }
 
     private func makeStructuredResult(from rawText: String) -> MockAgentResult? {

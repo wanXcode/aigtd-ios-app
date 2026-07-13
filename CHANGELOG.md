@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-Current development changes after `0.2.0`.
+Development continues after the `0.3.0` stabilization candidate. Planned work is tracked in the version roadmap and release PRD.
+
+## 0.3.0 - Release Candidate
+
+Stabilization release candidate validated on iPhone as build `0.3.0 (13)`.
 
 ### Added
 
@@ -10,6 +14,8 @@ Current development changes after `0.2.0`.
 - added reminder browser states for permission missing, sync failure, empty store, and no remaining active tasks
 - documented the structured AI action execution plan for chat-driven Reminders operations under `docs/ai-structured-action-execution.md`
 - added structured `delete_reminder` chat intent execution so follow-up delete requests can remove reminders for real instead of only replying in text
+- added a two-stage reminder rescheduling flow that prepares a deterministic schedule for review before applying it
+- added the `AIGTDRemindersTests` unit-test target and an offline smoke test baseline
 
 ### Improved
 
@@ -21,15 +27,36 @@ Current development changes after `0.2.0`.
 - switched the remote chat runtime to prefer structured JSON actions so the app can distinguish task execution from plain conversation more reliably
 - updated chat execution flow to show pending wording first and only confirm success after local Reminders writes actually finish
 - included a recent conversation window in remote model prompts so phrases like “刚才那条 / 你刚建的那个” can resolve against chat context more reliably
+- aligned the project generation source and Xcode project on version `0.3.0 (5)`
+- advanced the post-test repair candidate to build `0.3.0 (13)`
 
 ### Fixed
 
+- fixed single-reminder time changes being misclassified as batch rescheduling by adding an executable `update_reminder` action
+- fixed generated reschedule plans being marked failed before the user could apply them
+- fixed exact duplicate reminder titles bypassing ambiguity protection during destructive actions
+- fixed plain conversation briefly showing an incorrect provisional Action card before the model intent was known
+- fixed newly completed reminder syncs displaying as occurring “0 秒后”
+- fixed Chinese relative-date updates retaining the current clock time instead of the requested hour, and corrected next-week weekday calculation
+- fixed targetless follow-up time changes searching by duplicate titles instead of using the most recently created reminder ID
+- fixed successful contextual time changes retaining a stale ambiguity follow-up in the completed Action card
+- changed ambiguous deletion from a contradictory failure state to a non-destructive “待确认” state
+- fixed the Reminders sync age label not advancing after its initial “刚刚同步” render
+- added navigation from the Agent diagnostics summary to request and stage-level diagnostic details
+- completed Chat trace lifecycle recording so finished requests no longer remain labeled as processing
 - fixed Reminders sections disappearing when a list had no active tasks
 - fixed stale reminder data remaining visible after reminders permission was revoked
 - fixed speech session user ID generation to avoid depending on `identifierForVendor`
 - fixed chat replies claiming a reminder was created even when no executable action had been produced or persisted
 - fixed streaming chat rendering leaking raw structured JSON to the message bubble before the final reply was resolved
 - fixed follow-up task deletion commands failing because relative references like “删除刚才这条任务” were not mapped back to the most recently created reminder
+
+### Validation
+
+- passed Debug and Release iOS builds
+- compiled the offline unit-test target and 100-case Chinese conversation evaluation suite
+- passed the documented iPhone acceptance flow for create, update, move, delete, reschedule, ambiguity protection, plain chat, sync display, and diagnostics
+- verified local diagnostic retention and credential redaction behavior
 
 ## 0.2.0
 

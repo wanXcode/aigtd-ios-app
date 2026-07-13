@@ -12,6 +12,9 @@ struct AgentHomeView: View {
     @State private var showsModelSettings = false
     @State private var selectedDocumentID: UUID?
     @State private var microphonePermission = AVAudioApplication.shared.recordPermission
+    @State private var isFullDebugEnabled = false
+    @State private var diagnosticTraceCount = 0
+    @State private var latestDiagnosticDate: Date?
 
     var body: some View {
         List {
@@ -65,6 +68,36 @@ struct AgentHomeView: View {
             Section("执行策略") {
                 Text("删除需要确认")
                 Text("新建列表需要确认")
+            }
+
+            Section {
+                NavigationLink {
+                    AgentDiagnosticsListView()
+                } label: {
+                    LabeledContent("诊断记录", value: diagnosticStatusText)
+                }
+
+                Toggle("保存完整调试内容", isOn: $isFullDebugEnabled)
+                    .onChange(of: isFullDebugEnabled) { _, enabled in
+                        AgentTraceService.shared.isFullDebugEnabled = enabled
+                        RemoteResponseDebugStore.shared.isFullDebugEnabled = enabled
+                        refreshDiagnosticStatus()
+                    }
+
+                Text(fullDebugPrivacyHint)
+                    .font(.footnote)
+                    .foregroundStyle(isFullDebugEnabled ? .orange : .secondary)
+
+                Button("立即清除诊断数据", role: .destructive) {
+                    AgentTraceService.shared.clear()
+                    RemoteResponseDebugStore.shared.clear()
+                    refreshDiagnosticStatus()
+                }
+                .disabled(diagnosticTraceCount == 0 && RemoteResponseDebugStore.shared.load() == nil)
+            } header: {
+                Text("本机诊断")
+            } footer: {
+                Text("诊断数据仅保存在本机，最多保留 20 次请求或 7 天。API Key、Authorization 和语音凭证永远不会保存。")
             }
 
             Section("授权管理") {
@@ -122,6 +155,7 @@ struct AgentHomeView: View {
         .onAppear {
             AIGTDAgentDocumentStore.ensureDefaults(in: modelContext)
             refreshPermissionStatus()
+            refreshDiagnosticStatus()
             if appModel.pendingChatDraftAfterModelSetup.isEmpty == false {
                 showsModelSettings = true
             }
@@ -243,6 +277,28 @@ struct AgentHomeView: View {
         }
     }
 
+    private var diagnosticStatusText: String {
+        guard diagnosticTraceCount > 0 else { return "暂无记录" }
+        if let latestDiagnosticDate {
+            return "\(diagnosticTraceCount) 条，最近 \(latestDiagnosticDate.formatted(date: .omitted, time: .shortened))"
+        }
+        return "\(diagnosticTraceCount) 条"
+    }
+
+    private var fullDebugPrivacyHint: String {
+        if isFullDebugEnabled {
+            return "已开启：短期保存经过凭证过滤的响应与错误正文，其中仍可能包含私人聊天和任务内容。排查完成后请关闭或立即清除。"
+        }
+        return "默认保护已开启：只保存文本长度、哈希、结构字段和错误类型，无法还原完整聊天、任务标题或备注。"
+    }
+
+    private func refreshDiagnosticStatus() {
+        let traces = AgentTraceService.shared.traces()
+        diagnosticTraceCount = traces.count
+        latestDiagnosticDate = traces.first?.updatedAt
+        isFullDebugEnabled = AgentTraceService.shared.isFullDebugEnabled
+    }
+
     private func requestMicrophonePermission() {
         AVAudioApplication.requestRecordPermission { _ in
             DispatchQueue.main.async {
@@ -287,5 +343,215 @@ private struct AgentDocumentEditorView: View {
 
     private var editorTitle: String {
         AIGTDAgentDocumentKind(rawValue: document.kind)?.title ?? document.kind
+    }
+}
+
+private struct AgentDiagnosticsListView: View {
+    @State private var traces: [AgentTrace] = []
+
+    var body: some View {
+        Group {
+            if traces.isEmpty {
+                ContentUnavailableView(
+                    "暂无诊断记录",
+                    systemImage: "waveform.path.ecg",
+                    description: Text("完成一次聊天或任务操作后，诊断阶段会显示在这里。")
+                )
+            } else {
+                List(traces) { trace in
+                    NavigationLink {
+                        AgentDiagnosticDetailView(trace: trace)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Label(trace.resultTitle, systemImage: trace.resultSystemImage)
+                                    .foregroundStyle(trace.resultColor)
+                                Spacer()
+                                Text(trace.updatedAt.formatted(date: .omitted, time: .shortened))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            Text("\(trace.stages.count) 个阶段 · \(trace.actionSummary)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 3)
+                    }
+                }
+            }
+        }
+        .navigationTitle("诊断记录")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            traces = AgentTraceService.shared.traces()
+        }
+    }
+}
+
+private struct AgentDiagnosticDetailView: View {
+    let trace: AgentTrace
+
+    var body: some View {
+        List {
+            Section("请求") {
+                LabeledContent("结果", value: trace.resultTitle)
+                LabeledContent("开始", value: trace.createdAt.formatted(date: .abbreviated, time: .standard))
+                LabeledContent("结束", value: trace.updatedAt.formatted(date: .abbreviated, time: .standard))
+                LabeledContent("Trace ID", value: trace.id.uuidString)
+                    .font(.caption)
+            }
+
+            Section("执行阶段") {
+                ForEach(trace.stages) { stage in
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Label(stage.stage.displayName, systemImage: stage.status.systemImage)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(stage.status.color)
+                            Spacer()
+                            Text(stage.timestamp.formatted(date: .omitted, time: .standard))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if let actionType = stage.actionType, actionType.isEmpty == false {
+                            diagnosticLine(title: "动作", value: actionType)
+                        }
+                        if let duration = stage.durationMilliseconds {
+                            diagnosticLine(title: "耗时", value: "\(duration) ms")
+                        }
+                        if let errorCategory = stage.errorCategory, errorCategory.isEmpty == false {
+                            diagnosticLine(title: "错误类型", value: errorCategory)
+                        }
+                        if let content = stage.content {
+                            contentSummary(content, title: "内容摘要")
+                        }
+                        if let error = stage.userVisibleErrorSummary {
+                            contentSummary(error, title: "错误摘要")
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+
+            Section {
+                Text("默认仅展示长度、哈希和结构字段。只有主动开启“保存完整调试内容”后，才会显示经过凭证过滤的短期预览。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .navigationTitle("诊断详情")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func diagnosticLine(title: String, value: String) -> some View {
+        HStack(alignment: .top) {
+            Text(title)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+                .multilineTextAlignment(.trailing)
+        }
+        .font(.caption)
+    }
+
+    @ViewBuilder
+    private func contentSummary(_ summary: AgentTraceContentSummary, title: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+            Text("长度：\(summary.length) bytes")
+            Text("哈希：\(String(summary.sha256.prefix(12)))…")
+            if summary.structure.isEmpty == false {
+                Text("结构：\(summary.structure.joined(separator: ", "))")
+            }
+            if let preview = summary.sanitizedPreview, preview.isEmpty == false {
+                Text(preview)
+                    .textSelection(.enabled)
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+}
+
+private extension AgentTrace {
+    var resultTitle: String {
+        if stages.contains(where: { $0.status == .failure }) {
+            return "失败"
+        }
+        if stages.last?.stage == .replyFinalized {
+            return "已完成"
+        }
+        if stages.contains(where: { $0.stage == .structuredParseCompleted }) {
+            return "已解析"
+        }
+        return "处理中"
+    }
+
+    var resultSystemImage: String {
+        if stages.contains(where: { $0.status == .failure }) {
+            return "xmark.circle.fill"
+        }
+        if stages.last?.stage == .replyFinalized {
+            return "checkmark.circle.fill"
+        }
+        if stages.contains(where: { $0.stage == .structuredParseCompleted }) {
+            return "checkmark.circle"
+        }
+        return "clock.fill"
+    }
+
+    var resultColor: Color {
+        if stages.contains(where: { $0.status == .failure }) {
+            return .red
+        }
+        if stages.last?.stage == .replyFinalized {
+            return .green
+        }
+        if stages.contains(where: { $0.stage == .structuredParseCompleted }) {
+            return .secondary
+        }
+        return .orange
+    }
+
+    var actionSummary: String {
+        stages.reversed().compactMap(\.actionType).first ?? "无任务动作"
+    }
+}
+
+private extension AgentTraceStage {
+    var displayName: String {
+        switch self {
+        case .inputReceived: "收到输入"
+        case .localPreviewCompleted: "本地预判"
+        case .remoteRequestStarted: "远端请求"
+        case .remoteResponseReceived: "收到回复"
+        case .structuredParseCompleted: "结构化解析"
+        case .fallbackResolutionCompleted: "回退解析"
+        case .actionExecutionStarted: "开始执行"
+        case .actionExecutionCompleted: "执行完成"
+        case .remindersRefreshCompleted: "刷新提醒事项"
+        case .replyFinalized: "完成回复"
+        }
+    }
+}
+
+private extension AgentTraceStageStatus {
+    var systemImage: String {
+        switch self {
+        case .success: "checkmark.circle.fill"
+        case .failure: "xmark.circle.fill"
+        case .skipped: "minus.circle.fill"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .success: .green
+        case .failure: .red
+        case .skipped: .secondary
+        }
     }
 }

@@ -34,6 +34,7 @@ struct ChatHomeView: View {
     @State private var voiceTailDotsCount = 0
     @State private var composerFocusRequestID = UUID()
     @State private var isComposerFocused = false
+    @State private var executingActionIDs: Set<UUID> = []
     private let agentRuntime = AgentRuntimeService()
     @StateObject private var composerFocusBridge = ComposerTextViewFocusBridge()
 
@@ -360,37 +361,8 @@ struct ChatHomeView: View {
         try? modelContext.save()
 
         let runtimeContext = AIGTDAgentDocumentStore.runtimeContext(from: agentDocuments)
-        let localPreviewResult = MockAgentService().respond(
-            to: content,
-            reminderLists: appModel.reminderLists,
-            reminderItems: appModel.reminderItems,
-            agentContext: runtimeContext
-        )
-        let previewStartsPending = [
-            MockAgentIntent.createList.rawValue,
-            MockAgentIntent.createReminder.rawValue,
-            MockAgentIntent.moveReminder.rawValue,
-            MockAgentIntent.completeReminder.rawValue,
-            MockAgentIntent.deleteReminder.rawValue
-        ].contains(localPreviewResult.actionType ?? "")
+        let traceID = UUID()
         var createdLogID: UUID?
-        var provisionalLog: ActionLog?
-        if previewStartsPending, let previewActionType = localPreviewResult.actionType {
-            let log = ActionLog(
-                sessionID: session.id,
-                messageID: assistantMessage.id,
-                actionType: previewActionType,
-                payloadJSON: localPreviewResult.payloadJSON,
-                executionStatus: "pending",
-                errorMessage: "",
-                executedAt: nil,
-                undoToken: ""
-            )
-            modelContext.insert(log)
-            provisionalLog = log
-            createdLogID = log.id
-            try? modelContext.save()
-        }
 
         let result = await agentRuntime.respond(
             to: content,
@@ -399,6 +371,7 @@ struct ChatHomeView: View {
             configuration: activeModelConfiguration,
             agentContext: runtimeContext,
             conversationHistory: conversationHistory,
+            traceID: traceID,
             onTextUpdate: { partialText in
                 if partialText.isEmpty == false {
                     isStreamingReply = true
@@ -408,24 +381,26 @@ struct ChatHomeView: View {
                 try? modelContext.save()
             }
         )
+        let normalizedRemoteResult = normalizeStructuredResult(result)
         let executionResult = resolveExecutionResult(
             userContent: content,
-            remoteResult: result,
+            remoteResult: normalizedRemoteResult,
             runtimeContext: runtimeContext
         )
         let displayResult = resolveDisplayResult(
-            remoteResult: result,
+            remoteResult: normalizedRemoteResult,
             executionResult: executionResult
         )
         let startsPending = [
             MockAgentIntent.createList.rawValue,
             MockAgentIntent.createReminder.rawValue,
+            MockAgentIntent.updateReminder.rawValue,
             MockAgentIntent.moveReminder.rawValue,
             MockAgentIntent.completeReminder.rawValue,
             MockAgentIntent.deleteReminder.rawValue
         ].contains(executionResult.actionType ?? "")
         updateRuntimeNotice(
-            remoteResult: result,
+            remoteResult: normalizedRemoteResult,
             executionResult: executionResult
         )
         assistantMessage.text = startsPending
@@ -434,20 +409,13 @@ struct ChatHomeView: View {
         assistantMessage.actionResultSummary = executionResult.actionType == nil ? "" : executionResult.summary
         assistantMessage.status = "sent"
         isStreamingReply = false
-        if let provisionalLog {
-            if let actionType = executionResult.actionType, startsPending {
-                provisionalLog.actionType = actionType
-                provisionalLog.payloadJSON = executionResult.payloadJSON
-                provisionalLog.executionStatus = "pending"
-                provisionalLog.errorMessage = ""
-                provisionalLog.executedAt = nil
-            } else {
-                modelContext.delete(provisionalLog)
-                createdLogID = nil
-            }
-        }
-
-        if createdLogID == nil, let actionType = executionResult.actionType {
+        if let actionType = executionResult.actionType {
+            AgentTraceService.shared.record(
+                traceID: traceID,
+                stage: .fallbackResolutionCompleted,
+                status: .success,
+                actionType: actionType
+            )
             let log = ActionLog(
                 sessionID: session.id,
                 messageID: assistantMessage.id,
@@ -468,20 +436,55 @@ struct ChatHomeView: View {
         try? modelContext.save()
 
         if startsPending {
+            AgentTraceService.shared.record(
+                traceID: traceID,
+                stage: .actionExecutionStarted,
+                status: .success,
+                actionType: executionResult.actionType
+            )
             await Task.yield()
             try? await Task.sleep(for: minimumPendingDisplayDuration)
         }
 
-        if let createdLogID {
-            if startsPending {
-                await Task.yield()
-            }
+        if let createdLogID, startsPending {
+            await Task.yield()
             if let outcome = await executeResultAction(logID: createdLogID, result: executionResult) {
                 assistantMessage.text = outcome.reply
                 assistantMessage.actionResultSummary = outcome.summary
                 try? modelContext.save()
             }
+
+            if let completedLog = actionLogs.first(where: { $0.id == createdLogID }) {
+                let traceStatus: AgentTraceStageStatus = switch completedLog.executionStatus {
+                case "success": .success
+                case "needs_clarification": .skipped
+                default: .failure
+                }
+                AgentTraceService.shared.record(
+                    traceID: traceID,
+                    stage: .actionExecutionCompleted,
+                    status: traceStatus,
+                    actionType: completedLog.actionType,
+                    errorCategory: completedLog.errorMessage.isEmpty ? nil : "action_execution",
+                    userVisibleError: completedLog.errorMessage.nonEmpty
+                )
+                AgentTraceService.shared.record(
+                    traceID: traceID,
+                    stage: .remindersRefreshCompleted,
+                    status: appModel.reminderListsErrorMessage.isEmpty ? .success : .failure,
+                    errorCategory: appModel.reminderListsErrorMessage.isEmpty ? nil : "refresh",
+                    userVisibleError: appModel.reminderListsErrorMessage.nonEmpty
+                )
+            }
         }
+
+
+        AgentTraceService.shared.record(
+            traceID: traceID,
+            stage: .replyFinalized,
+            status: .success,
+            actionType: executionResult.actionType
+        )
     }
 
     private func sendWithoutPrompt(_ content: String, clearDraft: Bool) async {
@@ -875,6 +878,17 @@ struct ChatHomeView: View {
         let summary: String
     }
 
+    private enum RescheduleExecutionError: LocalizedError {
+        case invalidDueDate(String)
+
+        var errorDescription: String? {
+            switch self {
+            case let .invalidDueDate(title):
+                return "“\(title)”的目标时间无效。"
+            }
+        }
+    }
+
     private struct ReminderReference {
         let targetText: String
         let identifier: String?
@@ -912,6 +926,75 @@ struct ChatHomeView: View {
         result: MockAgentResult
     ) async -> ActionExecutionOutcome? {
         guard let log = actionLogs.first(where: { $0.id == logID }) else { return nil }
+
+        if result.actionType == MockAgentIntent.planReschedule.rawValue {
+            guard let envelope = decodePayload(from: result.payloadJSON),
+                  envelope.action.entities["phase"]?.nonEmpty == "apply",
+                  let plan = decodeReschedulePlan(from: envelope.action.entities),
+                  plan.items.isEmpty == false else {
+                log.executionStatus = "failed"
+                log.errorMessage = "无法解析要应用的重排方案。"
+                log.executedAt = .now
+                try? modelContext.save()
+                return ActionExecutionOutcome(
+                    reply: "我理解的是要应用这份重排方案，但这次没能解析出可执行的计划。",
+                    summary: "应用方案失败"
+                )
+            }
+
+            guard log.executionStatus == "pending", log.executedAt == nil else {
+                return nil
+            }
+
+            var report = ReminderBatchExecution.execute(items: plan.items) { item in
+                guard let dueDate = parseISODate(item.dueDateISO8601) else {
+                    throw RescheduleExecutionError.invalidDueDate(item.title)
+                }
+                try ReminderStoreService().updateReminderDueDate(
+                    identifier: item.reminderID,
+                    dueDate: dueDate
+                )
+            }
+
+            await appModel.refreshReminderLists()
+            if let refreshError = appModel.reminderListsErrorMessage.nonEmpty {
+                report = report.recordingRefreshFailure(refreshError)
+            }
+
+            var resultEntities = envelope.action.entities
+            if let reportData = try? JSONEncoder().encode(report),
+               let reportJSON = String(data: reportData, encoding: .utf8) {
+                resultEntities["execution_result_json"] = reportJSON
+            }
+            resultEntities["execution_total_count"] = String(report.totalCount)
+            resultEntities["execution_success_count"] = String(report.successCount)
+            resultEntities["execution_failure_count"] = String(report.failureCount)
+            if let updatedPayload = encodePayload(
+                MockAgentEnvelope(
+                    action: MockAgentActionPayload(
+                        intent: envelope.action.intent,
+                        title: envelope.action.title,
+                        entities: resultEntities,
+                        requiresConfirmation: envelope.action.requiresConfirmation
+                    ),
+                    confidence: envelope.confidence,
+                    summary: rescheduleExecutionSummary(for: report),
+                    followUpPrompt: envelope.followUpPrompt,
+                    matchedSignals: envelope.matchedSignals
+                )
+            ) {
+                log.payloadJSON = updatedPayload
+            }
+
+            log.executionStatus = report.status.rawValue
+            log.errorMessage = rescheduleExecutionErrorMessage(for: report)
+            log.executedAt = .now
+            try? modelContext.save()
+            return ActionExecutionOutcome(
+                reply: rescheduleExecutionReply(for: report),
+                summary: rescheduleExecutionSummary(for: report)
+            )
+        }
 
         if result.actionType == MockAgentIntent.createList.rawValue {
             guard let envelope = decodePayload(from: result.payloadJSON),
@@ -998,6 +1081,84 @@ struct ChatHomeView: View {
                 return ActionExecutionOutcome(
                     reply: "我理解的是要新建任务，但这次没有写进提醒事项：\(error.localizedDescription)",
                     summary: "创建任务失败"
+                )
+            }
+        }
+
+        if result.actionType == MockAgentIntent.updateReminder.rawValue {
+            guard let envelope = decodePayload(from: result.payloadJSON),
+                  let rawTarget = actionEntityValue(
+                    in: envelope.action.entities,
+                    keys: ["target", "title", "task_title", "task", "object"]
+                  ),
+                  let dueDateValue = actionEntityValue(
+                    in: envelope.action.entities,
+                    keys: ["due_date", "target_date", "datetime"]
+                  ),
+                  let dueDate = parseISODate(dueDateValue),
+                  let resolvedReference = resolveUpdateReminderReference(
+                    rawTarget: rawTarget,
+                    sourceText: envelope.action.entities["source_text"] ?? "",
+                    sessionID: log.sessionID
+                  ) else {
+                log.executionStatus = "failed"
+                log.errorMessage = "无法解析要修改的任务或目标时间。"
+                log.executedAt = .now
+                try? modelContext.save()
+                return ActionExecutionOutcome(
+                    reply: "我理解的是要修改任务时间，但这次没能解析出具体任务或时间。",
+                    summary: "修改任务时间失败"
+                )
+            }
+
+            let target = resolvedReference.targetText
+            do {
+                if let identifier = resolvedReference.identifier {
+                    try ReminderStoreService().updateReminderDueDate(
+                        identifier: identifier,
+                        dueDate: dueDate
+                    )
+                } else {
+                    try await ReminderStoreService().updateReminderDueDate(
+                        targetText: target,
+                        dueDate: dueDate
+                    )
+                }
+                await appModel.refreshReminderLists()
+                var updatedEntities = envelope.action.entities
+                updatedEntities["target"] = target
+                if let payloadJSON = encodePayload(
+                    MockAgentEnvelope(
+                        action: MockAgentActionPayload(
+                            intent: envelope.action.intent,
+                            title: envelope.action.title,
+                            entities: updatedEntities,
+                            requiresConfirmation: false
+                        ),
+                        confidence: envelope.confidence,
+                        summary: "已修改任务时间：\(target)",
+                        followUpPrompt: nil,
+                        matchedSignals: envelope.matchedSignals
+                    )
+                ) {
+                    log.payloadJSON = payloadJSON
+                }
+                log.executionStatus = "success"
+                log.errorMessage = ""
+                log.executedAt = .now
+                try? modelContext.save()
+                return ActionExecutionOutcome(
+                    reply: "好，“\(target)”的时间已经改好了。",
+                    summary: "已修改任务时间：\(target)"
+                )
+            } catch {
+                log.executionStatus = "failed"
+                log.errorMessage = error.localizedDescription
+                log.executedAt = .now
+                try? modelContext.save()
+                return ActionExecutionOutcome(
+                    reply: "这次还不能直接修改：\(error.localizedDescription)",
+                    summary: "修改任务时间失败"
                 )
             }
         }
@@ -1139,6 +1300,25 @@ struct ChatHomeView: View {
                     reply: "好，“\(target)”这条我已经帮你删掉了。",
                     summary: "已删除任务：\(target)"
                 )
+            } catch let error as ReminderStoreError {
+                if case .reminderAmbiguous = error {
+                    log.executionStatus = "needs_clarification"
+                    log.errorMessage = error.localizedDescription
+                    log.executedAt = .now
+                    try? modelContext.save()
+                    return ActionExecutionOutcome(
+                        reply: error.localizedDescription,
+                        summary: "需要确认要删除的任务"
+                    )
+                }
+                log.executionStatus = "failed"
+                log.errorMessage = error.localizedDescription
+                log.executedAt = .now
+                try? modelContext.save()
+                return ActionExecutionOutcome(
+                    reply: "我理解的是要删除任务，但这次没有删成功：\(error.localizedDescription)",
+                    summary: "删除任务失败"
+                )
             } catch {
                 log.executionStatus = "failed"
                 log.errorMessage = error.localizedDescription
@@ -1160,6 +1340,11 @@ struct ChatHomeView: View {
     private func decodePayload(from json: String) -> MockAgentEnvelope? {
         guard let data = json.data(using: .utf8) else { return nil }
         return try? JSONDecoder().decode(MockAgentEnvelope.self, from: data)
+    }
+
+    private func encodePayload(_ envelope: MockAgentEnvelope) -> String? {
+        guard let data = try? JSONEncoder().encode(envelope) else { return nil }
+        return String(data: data, encoding: .utf8)
     }
 
     private func parseISODate(_ value: String?) -> Date? {
@@ -1194,6 +1379,28 @@ struct ChatHomeView: View {
         return ReminderReference(targetText: trimmed, identifier: nil)
     }
 
+    private func resolveUpdateReminderReference(
+        rawTarget: String,
+        sourceText: String,
+        sessionID: UUID
+    ) -> ReminderReference? {
+        let normalizedSource = sourceText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let relativeOnlyPrefixes = [
+            "改到", "再改到", "调整到", "再调整到", "延后到", "推迟到", "延期到"
+        ]
+        let relativeSignals = [
+            "它", "这条", "那条", "上一条", "刚才", "刚刚", "刚创建", "刚建"
+        ]
+        let targetsRecentReminder = relativeOnlyPrefixes.contains { normalizedSource.hasPrefix($0) } ||
+            relativeSignals.contains { normalizedSource.contains($0) }
+
+        if targetsRecentReminder,
+           let recent = latestCreatedReminderReference(in: sessionID) {
+            return recent
+        }
+        return resolveReminderReference(rawTarget, sessionID: sessionID)
+    }
+
     private func isRelativeReminderReference(_ value: String) -> Bool {
         let hints = [
             "当前这条", "这条", "那条", "上一条", "上一个", "刚才", "刚刚",
@@ -1224,23 +1431,142 @@ struct ChatHomeView: View {
         )
     }
 
+    private func hydratedReschedulePlan(from entities: [String: String]) -> ReschedulePlan? {
+        if let existing = decodeReschedulePlan(from: entities) {
+            return existing
+        }
+        return ReschedulePlanner().makePlan(
+            entities: entities,
+            reminderItems: appModel.reminderItems
+        )
+    }
+
+    private func decodeReschedulePlan(from entities: [String: String]) -> ReschedulePlan? {
+        guard let value = entities["plan_json"]?.nonEmpty,
+              let data = value.data(using: .utf8) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(ReschedulePlan.self, from: data)
+    }
+
+    private func enrichedRescheduleEntities(
+        from entities: [String: String],
+        plan: ReschedulePlan
+    ) -> [String: String] {
+        var updated = entities
+        updated["phase"] = entities["phase"]?.nonEmpty ?? "plan"
+        if entities["plan_json"]?.nonEmpty == nil {
+            let data = try? JSONEncoder().encode(plan)
+            updated["plan_json"] = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        }
+        updated["plan_item_count"] = String(plan.items.count)
+        updated["scope_label"] = plan.scopeLabel
+        updated["window_days"] = String(plan.windowDays)
+        updated["start_date"] = plan.startDateISO8601
+        updated["end_date"] = plan.endDateISO8601
+        return updated
+    }
+
+    private func reschedulePlanReply(for plan: ReschedulePlan) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "M月d日 HH:mm"
+        let isoFormatter = ISO8601DateFormatter()
+
+        var lines = [
+            "我先给你排了一个方案，你看下合不合适。"
+        ]
+
+        for item in plan.items.prefix(6) {
+            let dueLabel: String
+            if let date = isoFormatter.date(from: item.dueDateISO8601) {
+                dueLabel = formatter.string(from: date)
+            } else {
+                dueLabel = item.dueDateISO8601
+            }
+            lines.append("• \(item.title)：\(dueLabel)")
+        }
+
+        if plan.items.count > 6 {
+            lines.append("• 另外还有 \(plan.items.count - 6) 条，已经一起排进方案里了。")
+        }
+
+        lines.append("确认的话，点卡片里的“应用这个方案”就行。")
+        return lines.joined(separator: "\n")
+    }
+
+    private func rescheduleExecutionSummary(for report: ReminderBatchExecutionReport) -> String {
+        "重排共 \(report.totalCount) 条：成功 \(report.successCount) 条，失败 \(report.failureCount) 条"
+    }
+
+    private func rescheduleExecutionReply(for report: ReminderBatchExecutionReport) -> String {
+        var parts: [String] = []
+        switch report.status {
+        case .success:
+            parts.append("已经按方案重排了 \(report.totalCount) 条任务。")
+        case .partial:
+            if report.failureCount > 0 {
+                parts.append("这次重排共 \(report.totalCount) 条，成功 \(report.successCount) 条，失败 \(report.failureCount) 条。")
+                parts.append(rescheduleFailureTitlesText(for: report))
+            } else {
+                parts.append("\(report.successCount) 条任务已经写入提醒事项。")
+            }
+        case .failed:
+            parts.append("这次方案没有应用成功。共 \(report.totalCount) 条，成功 0 条，失败 \(report.failureCount) 条。")
+            parts.append(rescheduleFailureTitlesText(for: report))
+        }
+
+        if let refreshError = report.refreshErrorMessage {
+            parts.append("任务列表刷新失败：\(refreshError) 你可以稍后重新同步查看。")
+        }
+        return parts.filter { $0.isEmpty == false }.joined(separator: " ")
+    }
+
+    private func rescheduleFailureTitlesText(for report: ReminderBatchExecutionReport) -> String {
+        let titles = report.failureTitles(limit: 3)
+        guard titles.isEmpty == false else { return "" }
+        let quotedTitles = titles.map { "“\($0)”" }.joined(separator: "、")
+        let remainingCount = report.failureCount - titles.count
+        if remainingCount > 0 {
+            return "失败的是 \(quotedTitles) 等 \(report.failureCount) 条任务。"
+        }
+        return "失败的是 \(quotedTitles)。"
+    }
+
+    private func rescheduleExecutionErrorMessage(for report: ReminderBatchExecutionReport) -> String {
+        var details = report.failedItems.prefix(3).map { item in
+            "\(item.title)：\(item.errorMessage ?? "写入失败")"
+        }
+        if report.failureCount > 3 {
+            details.append("另有 \(report.failureCount - 3) 条写入失败")
+        }
+        if let refreshError = report.refreshErrorMessage {
+            details.append("刷新失败：\(refreshError)")
+        }
+        return details.joined(separator: "；")
+    }
+
     private func resolveExecutionResult(
         userContent: String,
         remoteResult: MockAgentResult,
         runtimeContext: AIGTDAgentRuntimeContext?
     ) -> MockAgentResult {
-        if isStructuredResult(remoteResult) {
-            return remoteResult
-        }
-
         let localFallback = MockAgentService().respond(
             to: userContent,
             reminderLists: appModel.reminderLists,
             reminderItems: appModel.reminderItems,
             agentContext: runtimeContext
         )
+        if isStructuredResult(remoteResult) {
+            if remoteResult.actionType == MockAgentIntent.planReschedule.rawValue,
+               localFallback.actionType == MockAgentIntent.updateReminder.rawValue {
+                return normalizeStructuredResult(localFallback)
+            }
+            return normalizeStructuredResult(remoteResult)
+        }
+
         if isStructuredResult(localFallback) {
-            return localFallback
+            return normalizeStructuredResult(localFallback)
         }
 
         return remoteResult
@@ -1268,6 +1594,57 @@ struct ChatHomeView: View {
         return true
     }
 
+    private func normalizeStructuredResult(_ result: MockAgentResult) -> MockAgentResult {
+        guard result.actionType == MockAgentIntent.planReschedule.rawValue,
+              let envelope = decodePayload(from: result.payloadJSON) else {
+            return result
+        }
+        guard let plan = hydratedReschedulePlan(from: envelope.action.entities),
+              plan.items.isEmpty == false else {
+            return MockAgentResult(
+                reply: "我看了一下，目前没有找到符合条件的未完成任务，所以没有生成空的重排方案。",
+                summary: "没有可重排的任务",
+                actionType: nil,
+                payloadJSON: "{}",
+                confidence: result.confidence,
+                followUpPrompt: result.followUpPrompt
+            )
+        }
+
+        let reply = reschedulePlanReply(for: plan)
+        let summary = "已生成重排方案：\(plan.items.count) 条"
+        var planEntities = envelope.action.entities
+        planEntities["phase"] = "plan"
+        let updatedEntities = enrichedRescheduleEntities(
+            from: planEntities,
+            plan: plan
+        )
+        let updatedEnvelope = MockAgentEnvelope(
+            action: MockAgentActionPayload(
+                intent: envelope.action.intent,
+                title: envelope.action.title,
+                entities: updatedEntities,
+                requiresConfirmation: envelope.action.requiresConfirmation
+            ),
+            confidence: envelope.confidence,
+            summary: summary,
+            followUpPrompt: envelope.followUpPrompt,
+            matchedSignals: envelope.matchedSignals
+        )
+        guard let payloadJSON = encodePayload(updatedEnvelope) else {
+            return result
+        }
+
+        return MockAgentResult(
+            reply: reply,
+            summary: summary,
+            actionType: result.actionType,
+            payloadJSON: payloadJSON,
+            confidence: result.confidence,
+            followUpPrompt: result.followUpPrompt
+        )
+    }
+
     private func scrollToLatestMessage(using proxy: ScrollViewProxy, animated: Bool) {
         DispatchQueue.main.async {
             if animated {
@@ -1291,17 +1668,103 @@ struct ChatHomeView: View {
         case MockAgentIntent.createReminder.rawValue,
              MockAgentIntent.createList.rawValue,
              MockAgentIntent.summarizeLists.rawValue,
-             MockAgentIntent.deleteReminder.rawValue:
+             MockAgentIntent.updateReminder.rawValue:
             appModel.selectedTab = .reminders
+        case MockAgentIntent.deleteReminder.rawValue:
+            if log.executionStatus == "needs_clarification" {
+                isComposerFocused = true
+                composerFocusRequestID = UUID()
+                composerFocusBridge.focus()
+            } else {
+                appModel.selectedTab = .reminders
+            }
+        case MockAgentIntent.planReschedule.rawValue:
+            if let phase = decodePayload(from: log.payloadJSON)?.action.entities["phase"]?.nonEmpty,
+               phase == "plan",
+               log.executionStatus == "success",
+               executingActionIDs.contains(log.id) == false {
+                Task {
+                    await applyReschedulePlan(log)
+                }
+            } else if ["success", "partial"].contains(log.executionStatus) {
+                appModel.selectedTab = .reminders
+            } else if let followUp = decodePayload(from: log.payloadJSON)?.followUpPrompt?.nonEmpty {
+                draft = followUp
+                isComposerFocused = true
+                composerFocusRequestID = UUID()
+                composerFocusBridge.focus()
+            }
         default:
             if let envelope = decodePayload(from: log.payloadJSON),
                let followUp = envelope.followUpPrompt?.nonEmpty {
-            draft = followUp
-            isComposerFocused = true
-            composerFocusRequestID = UUID()
-            composerFocusBridge.focus()
+                draft = followUp
+                isComposerFocused = true
+                composerFocusRequestID = UUID()
+                composerFocusBridge.focus()
+            }
         }
     }
+
+    @MainActor
+    private func applyReschedulePlan(_ log: ActionLog) async {
+        guard let envelope = decodePayload(from: log.payloadJSON),
+              envelope.action.entities["phase"]?.nonEmpty == "plan",
+              log.executionStatus == "success",
+              log.executedAt != nil,
+              executingActionIDs.insert(log.id).inserted,
+              let plan = decodeReschedulePlan(from: envelope.action.entities),
+              plan.items.isEmpty == false else {
+            return
+        }
+        defer { executingActionIDs.remove(log.id) }
+
+        let applyEntities = enrichedRescheduleEntities(
+            from: envelope.action.entities.merging(["phase": "apply"]) { _, new in new },
+            plan: plan
+        )
+        let applyEnvelope = MockAgentEnvelope(
+            action: MockAgentActionPayload(
+                intent: MockAgentIntent.planReschedule.rawValue,
+                title: envelope.action.title,
+                entities: applyEntities,
+                requiresConfirmation: false
+            ),
+            confidence: envelope.confidence,
+            summary: "准备应用重排方案",
+            followUpPrompt: envelope.followUpPrompt,
+            matchedSignals: envelope.matchedSignals
+        )
+        guard let payloadJSON = encodePayload(applyEnvelope) else { return }
+
+        log.payloadJSON = payloadJSON
+        log.executionStatus = "pending"
+        log.errorMessage = ""
+        log.executedAt = nil
+
+        if let messageID = log.messageID,
+           let message = messages.first(where: { $0.id == messageID }) {
+            message.text = "我来按这个方案重新排一下。"
+            message.actionResultSummary = "准备应用重排方案"
+            message.status = "sent"
+        }
+        try? modelContext.save()
+
+        let applyResult = MockAgentResult(
+            reply: "我来按这个方案重新排一下。",
+            summary: "准备应用重排方案",
+            actionType: MockAgentIntent.planReschedule.rawValue,
+            payloadJSON: payloadJSON,
+            confidence: envelope.confidence,
+            followUpPrompt: envelope.followUpPrompt
+        )
+        if let outcome = await executeResultAction(logID: log.id, result: applyResult),
+           let messageID = log.messageID,
+           let message = messages.first(where: { $0.id == messageID }) {
+            message.text = outcome.reply
+            message.actionResultSummary = outcome.summary
+            message.status = "sent"
+            try? modelContext.save()
+        }
     }
 
     private func updateRuntimeNotice(
@@ -1372,6 +1835,8 @@ struct ChatHomeView: View {
         switch result.actionType {
         case MockAgentIntent.createReminder.rawValue:
             return "我来帮你记一下这条任务。"
+        case MockAgentIntent.updateReminder.rawValue:
+            return "我来帮你修改这条任务的时间。"
         case MockAgentIntent.createList.rawValue:
             return "我来帮你建这个清单。"
         case MockAgentIntent.moveReminder.rawValue:
@@ -1379,7 +1844,7 @@ struct ChatHomeView: View {
         case MockAgentIntent.completeReminder.rawValue:
             return "我来帮你把这条标记完成。"
         case MockAgentIntent.deleteReminder.rawValue:
-            return "我来帮你删掉这条任务。"
+            return "我先核对一下你要删除的是哪条任务。"
         default:
             return result.reply
         }
@@ -1632,10 +2097,11 @@ private struct ActionResultCardView: View {
                 .padding(.top, 2)
             }
 
-            if log.executionStatus != "pending", let primaryActionTitle {
+            if let primaryActionTitle {
                 Button(primaryActionTitle, action: onPrimaryAction)
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
+                    .disabled(log.executionStatus == "pending")
             }
         }
         .padding(14)
@@ -1655,8 +2121,23 @@ private struct ActionResultCardView: View {
         switch log.actionType {
         case "create_reminder":
             return log.executionStatus == "success" ? "记好了" : "正在记"
+        case "update_reminder":
+            return log.executionStatus == "success" ? "时间改好了" : "正在改时间"
         case "create_list":
             return log.executionStatus == "success" ? "清单建好了" : "正在建清单"
+        case "plan_reschedule":
+            switch (reschedulePhase, log.executionStatus) {
+            case ("apply", "success"):
+                return "排好了"
+            case ("apply", "partial"):
+                return "部分排好了"
+            case ("apply", "failed"):
+                return "没排成"
+            case ("apply", _):
+                return "正在重排"
+            default:
+                return "排了个方案"
+            }
         case "summarize_lists":
             return "我看过了"
         case "capture_message":
@@ -1666,7 +2147,16 @@ private struct ActionResultCardView: View {
         case "complete_reminder":
             return log.executionStatus == "success" ? "完成了" : "正在完成"
         case "delete_reminder":
-            return log.executionStatus == "success" ? "删掉了" : "正在删除"
+            switch log.executionStatus {
+            case "success":
+                return "删掉了"
+            case "needs_clarification":
+                return "需要确认"
+            case "failed":
+                return "删除失败"
+            default:
+                return "正在核对"
+            }
         default:
             return "我处理好了"
         }
@@ -1683,6 +2173,15 @@ private struct ActionResultCardView: View {
             default:
                 return "这条已经进提醒事项了"
             }
+        case "update_reminder":
+            switch log.executionStatus {
+            case "pending":
+                return "我在帮你修改任务时间"
+            case "failed":
+                return log.errorMessage.nonEmpty ?? "任务时间暂时还没修改成功"
+            default:
+                return "新的时间已经写进提醒事项了"
+            }
         case "create_list":
             switch log.executionStatus {
             case "pending":
@@ -1691,6 +2190,21 @@ private struct ActionResultCardView: View {
                 return log.errorMessage.nonEmpty ?? "新列表暂时还没创建成功"
             default:
                 return "新清单已经可以用了"
+            }
+        case "plan_reschedule":
+            switch (reschedulePhase, log.executionStatus) {
+            case ("apply", "pending"):
+                return "我在按确认过的方案改任务时间"
+            case ("apply", "partial"):
+                return rescheduleResultSubtitle ?? "部分任务已改好，另一些没有改成"
+            case ("apply", "failed"):
+                return rescheduleResultSubtitle ?? "这份重排方案暂时还没应用成功"
+            case ("apply", "success"):
+                return rescheduleResultSubtitle ?? "这份方案已经写进提醒事项了"
+            case ("apply", _):
+                return "我在核对这份方案的执行结果"
+            default:
+                return "先看看这份安排合不合适，再决定要不要应用"
             }
         case "summarize_lists":
             return "我把你现在的提醒事项看了一遍"
@@ -1717,7 +2231,9 @@ private struct ActionResultCardView: View {
         case "delete_reminder":
             switch log.executionStatus {
             case "pending":
-                return "我在帮你删除这条任务"
+                return "我在核对具体要删除哪一条"
+            case "needs_clarification":
+                return log.errorMessage.nonEmpty ?? "找到了多个同名任务，请说得更具体一点"
             case "failed":
                 return log.errorMessage.nonEmpty ?? "任务暂时还没删除成功"
             default:
@@ -1732,8 +2248,12 @@ private struct ActionResultCardView: View {
         switch log.actionType {
         case "create_reminder":
             return "checklist.checked"
+        case "update_reminder":
+            return "calendar.badge.clock"
         case "create_list":
             return "folder.badge.plus"
+        case "plan_reschedule":
+            return reschedulePhase == "apply" ? "calendar.badge.clock" : "calendar.day.timeline.leading"
         case "summarize_lists":
             return "text.alignleft"
         case "capture_message":
@@ -1753,8 +2273,12 @@ private struct ActionResultCardView: View {
         switch log.actionType {
         case "create_reminder":
             return .blue
+        case "update_reminder":
+            return .indigo
         case "create_list":
             return .blue
+        case "plan_reschedule":
+            return .purple
         case "summarize_lists":
             return .teal
         case "capture_message":
@@ -1811,9 +2335,41 @@ private struct ActionResultCardView: View {
             if let note = payload.action.entities["note"]?.nonEmpty {
                 lines.append("备注：\(note)")
             }
+        case "update_reminder":
+            if let target = payload.action.entities["target"]?.nonEmpty {
+                lines.append("任务：\(target)")
+            }
+            if let dueDate = payload.action.entities["due_date"]?.nonEmpty {
+                lines.append("新时间：\(formattedDueDate(from: dueDate) ?? dueDate)")
+            }
         case "create_list":
             if let name = payload.action.entities["list_name"]?.nonEmpty {
                 lines.append("清单：\(name)")
+            }
+        case "plan_reschedule":
+            if let plan = parsedReschedulePlan {
+                lines.append("范围：\(plan.scopeLabel)")
+                lines.append("任务：共 \(plan.items.count) 条")
+                if reschedulePhase == "apply", let report = parsedRescheduleExecutionReport {
+                    lines.append("结果：成功 \(report.successCount) 条，失败 \(report.failureCount) 条")
+                    for item in report.failedItems.prefix(3) {
+                        lines.append("失败：\(item.title)")
+                    }
+                    if report.failureCount > 3 {
+                        lines.append("另外还有 \(report.failureCount - 3) 条失败任务。")
+                    }
+                    if report.refreshErrorMessage != nil {
+                        lines.append("提醒事项已写入，但列表刷新失败，请稍后重新同步。")
+                    }
+                } else {
+                    for item in plan.items.prefix(6) {
+                        let dueLabel = formattedDueDate(from: item.dueDateISO8601) ?? item.dueDateISO8601
+                        lines.append("\(item.title) -> \(dueLabel)")
+                    }
+                    if plan.items.count > 6 {
+                        lines.append("另外还有 \(plan.items.count - 6) 条，已经一起排进方案里了。")
+                    }
+                }
             }
         case "summarize_lists":
             if let topItems = payload.action.entities["top_items"]?.nonEmpty {
@@ -1879,13 +2435,22 @@ private struct ActionResultCardView: View {
     }
 
     private var statusStyle: (label: String, foreground: Color, background: Color) {
+        if log.actionType == MockAgentIntent.planReschedule.rawValue,
+           reschedulePhase == "plan",
+           log.executionStatus == "success" {
+            return ("待确认", .purple, Color.purple.opacity(0.12))
+        }
         switch log.executionStatus {
         case "success":
             return ("已办好", cardAccent, cardAccent.opacity(0.12))
+        case "partial":
+            return ("部分完成", .orange, Color.orange.opacity(0.12))
         case "pending":
             return ("在处理", .orange, Color.orange.opacity(0.12))
         case "failed":
             return ("没成", .red, Color.red.opacity(0.12))
+        case "needs_clarification":
+            return ("待确认", .orange, Color.orange.opacity(0.12))
         default:
             return ("已接住", .secondary, Color.secondary.opacity(0.12))
         }
@@ -1893,10 +2458,24 @@ private struct ActionResultCardView: View {
 
     private var primaryActionTitle: String? {
         switch log.actionType {
-        case "create_reminder", "create_list", "summarize_lists":
+        case "create_reminder", "update_reminder", "create_list", "summarize_lists":
             return "去看清单"
         case "delete_reminder":
-            return "去看清单"
+            return log.executionStatus == "needs_clarification" ? "继续说明" : "去看清单"
+        case "plan_reschedule":
+            if reschedulePhase == "plan" {
+                return "应用这个方案"
+            }
+            switch log.executionStatus {
+            case "pending":
+                return "正在应用"
+            case "success":
+                return "去看清单"
+            case "partial":
+                return "查看结果"
+            default:
+                return "继续编辑"
+            }
         case "capture_message", "move_reminder", "complete_reminder":
             return "继续编辑"
         default:
@@ -1910,6 +2489,36 @@ private struct ActionResultCardView: View {
             return nil
         }
         return envelope
+    }
+
+    private var reschedulePhase: String {
+        parsePayloadEnvelope()?.action.entities["phase"]?.nonEmpty ?? "plan"
+    }
+
+    private var parsedReschedulePlan: ReschedulePlan? {
+        guard let payload = parsePayloadEnvelope(),
+              let value = payload.action.entities["plan_json"]?.nonEmpty,
+              let data = value.data(using: .utf8) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(ReschedulePlan.self, from: data)
+    }
+
+    private var parsedRescheduleExecutionReport: ReminderBatchExecutionReport? {
+        guard let payload = parsePayloadEnvelope(),
+              let value = payload.action.entities["execution_result_json"]?.nonEmpty,
+              let data = value.data(using: .utf8) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(ReminderBatchExecutionReport.self, from: data)
+    }
+
+    private var rescheduleResultSubtitle: String? {
+        guard let report = parsedRescheduleExecutionReport else { return nil }
+        if report.refreshErrorMessage != nil {
+            return "共 \(report.totalCount) 条，成功 \(report.successCount) 条，失败 \(report.failureCount) 条；列表刷新失败"
+        }
+        return "共 \(report.totalCount) 条，成功 \(report.successCount) 条，失败 \(report.failureCount) 条"
     }
 }
 
@@ -2116,7 +2725,9 @@ private struct ChatMessageRow: View {
     private func shouldShowActionCard(for log: ActionLog) -> Bool {
         switch log.actionType {
         case MockAgentIntent.createReminder.rawValue,
+             MockAgentIntent.updateReminder.rawValue,
              MockAgentIntent.createList.rawValue,
+             MockAgentIntent.planReschedule.rawValue,
              MockAgentIntent.moveReminder.rawValue,
              MockAgentIntent.completeReminder.rawValue,
              MockAgentIntent.deleteReminder.rawValue:

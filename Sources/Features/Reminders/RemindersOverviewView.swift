@@ -59,9 +59,11 @@ struct RemindersOverviewView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text(syncSectionTitle)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                    TimelineView(.periodic(from: .now, by: 1)) { timeline in
+                        Text(syncSectionTitle(at: timeline.date))
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
 
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(groupedActiveSections) { section in
@@ -146,7 +148,7 @@ struct RemindersOverviewView: View {
         )
     }
 
-    private var syncSectionTitle: String {
+    private func syncSectionTitle(at now: Date) -> String {
         if appModel.isLoadingReminderLists {
             return "正在同步提醒事项…"
         }
@@ -155,9 +157,20 @@ struct RemindersOverviewView: View {
             return "还没有同步过提醒事项"
         }
 
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .short
-        return "最新同步 \(formatter.localizedString(for: lastReminderSyncAt, relativeTo: .now))"
+        let elapsed = max(0, now.timeIntervalSince(lastReminderSyncAt))
+        if elapsed < 5 {
+            return "刚刚同步"
+        }
+        if elapsed < 60 {
+            return "最新同步 \(Int(elapsed)) 秒前"
+        }
+        if elapsed < 3_600 {
+            return "最新同步 \(Int(elapsed / 60)) 分钟前"
+        }
+        if elapsed < 86_400 {
+            return "最新同步 \(Int(elapsed / 3_600)) 小时前"
+        }
+        return "最新同步 \(Int(elapsed / 86_400)) 天前"
     }
 
     private var loadingState: some View {
