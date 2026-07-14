@@ -6,7 +6,7 @@ Development continues after the `0.3.0` stabilization candidate. Planned work is
 
 ## 0.3.0 - Release Candidate
 
-Stabilization release candidate validated on iPhone through build `0.3.0 (14)`; time-qualified duplicate deletion is addressed in hotfix candidate `0.3.0 (15)`.
+Stabilization release candidate validated on iPhone through build `0.3.0 (15)`; automated-test findings are addressed in final candidate `0.3.0 (16)`.
 
 ### Added
 
@@ -34,6 +34,7 @@ Stabilization release candidate validated on iPhone through build `0.3.0 (14)`; 
 - declared the app's non-exempt encryption usage in generated Info.plist to avoid repeated TestFlight export-compliance prompts
 - advanced the TestFlight smoke-test hotfix candidate to build `0.3.0 (14)`
 - advanced the time-qualified deletion hotfix candidate to build `0.3.0 (15)`
+- advanced the fully automated-test-validated candidate to build `0.3.0 (16)`
 
 ### Fixed
 
@@ -41,6 +42,10 @@ Stabilization release candidate validated on iPhone through build `0.3.0 (14)`; 
 - fixed generated reschedule plans being marked failed before the user could apply them
 - fixed exact duplicate reminder titles bypassing ambiguity protection during destructive actions
 - fixed explicit delete dates and times being discarded before duplicate-candidate resolution
+- fixed weekday and Chinese time-only parsing in the local fallback
+- fixed task titles containing “测试” being mistaken for casual probes
+- fixed “未完成” queries being mistaken for completion commands
+- fixed Authorization diagnostics redaction removing the Bearer scheme
 - fixed plain conversation briefly showing an incorrect provisional Action card before the model intent was known
 - fixed newly completed reminder syncs displaying as occurring “0 秒后”
 - fixed Chinese relative-date updates retaining the current clock time instead of the requested hour, and corrected next-week weekday calculation

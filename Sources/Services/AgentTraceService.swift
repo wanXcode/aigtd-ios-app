@@ -75,13 +75,10 @@ enum AgentDiagnosticRedactor {
 
     static func sanitize(_ text: String, knownSecrets: [String] = []) -> String {
         var result = text
-        for secret in knownSecrets where secret.isEmpty == false {
-            result = result.replacingOccurrences(of: secret, with: "[REDACTED]", options: [.caseInsensitive])
-        }
 
         let replacements = [
             (#"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+"#, "Bearer [REDACTED]"),
-            (#"(?i)(\"?(?:authorization|api[_-]?key|access[_-]?key|secret|token)\"?\s*[:=]\s*\"?)[^\"\s,;}]+"#, "$1[REDACTED]"),
+            (#"(?i)(\"?(?:api[_-]?key|access[_-]?key|secret|token)\"?\s*[:=]\s*\"?)[^\"\s,;}]+"#, "$1[REDACTED]"),
             (#"\bsk-[A-Za-z0-9_-]{8,}\b"#, "[REDACTED]"),
             (#"\bAKLT[A-Za-z0-9_-]{8,}\b"#, "[REDACTED]")
         ]
@@ -89,6 +86,9 @@ enum AgentDiagnosticRedactor {
             guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
             let range = NSRange(result.startIndex..<result.endIndex, in: result)
             result = regex.stringByReplacingMatches(in: result, range: range, withTemplate: replacement)
+        }
+        for secret in knownSecrets where secret.isEmpty == false {
+            result = result.replacingOccurrences(of: secret, with: "[REDACTED]", options: [.caseInsensitive])
         }
         return result
     }

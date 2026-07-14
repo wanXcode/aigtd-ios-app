@@ -380,8 +380,12 @@ struct MockAgentService {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard trimmed.isEmpty == false else { return false }
 
+        if matchesAny(trimmed, keywords: ["不想", "先不", "暂时不", "有点累"]) {
+            return true
+        }
+
         let explicitTaskSignals = [
-            "任务", "待办", "提醒我", "记一下", "记一个", "记个", "创建", "新建", "帮我记"
+            "任务", "待办", "todo", "提醒我", "记一下", "记一个", "记个", "创建", "新建", "帮我记"
         ]
         if matchesAny(trimmed, keywords: explicitTaskSignals) {
             return false
@@ -391,11 +395,7 @@ struct MockAgentService {
             return true
         }
 
-        let looksLikeTask = matchesAny(trimmed, keywords: [
-            "提醒我", "新建任务", "创建任务", "明天", "今天", "后天", "下周",
-            "完成", "移到", "放到", "列表", "清单", "回信", "整理", "报销"
-        ])
-        return looksLikeTask == false && trimmed.contains("测试")
+        return false
     }
 
     private func detectSummaryRequest(
@@ -630,30 +630,46 @@ struct MockAgentService {
         let calendar = Calendar.current
         let now = Date()
         let baseDate: Date?
+        let isTimeOnly: Bool
 
         if text.contains("今天") || text.contains("今日") || text.contains("今晚") {
             baseDate = now
+            isTimeOnly = false
         } else if text.contains("后天") {
             baseDate = calendar.date(byAdding: .day, value: 2, to: now)
+            isTimeOnly = false
         } else if text.contains("明天") || text.contains("明日") {
             baseDate = calendar.date(byAdding: .day, value: 1, to: now)
+            isTimeOnly = false
         } else if let explicit = parseExplicitMonthDay(from: text) {
             baseDate = explicit
+            isTimeOnly = false
         } else if let weekday = parseWeekday(from: text) {
             baseDate = weekday
+            isTimeOnly = false
+        } else if containsRequestedTime(in: text) {
+            baseDate = now
+            isTimeOnly = true
         } else {
             baseDate = nil
+            isTimeOnly = false
         }
 
-        return baseDate.map { applyingRequestedTime(from: text, to: $0) }
+        guard let baseDate else { return nil }
+        let candidate = applyingRequestedTime(from: text, to: baseDate)
+        if isTimeOnly, candidate <= now {
+            return calendar.date(byAdding: .day, value: 1, to: candidate)
+        }
+        return candidate
     }
 
     private func applyingRequestedTime(from text: String, to date: Date) -> Date {
+        let normalizedText = normalizedChineseTime(in: text)
         let timeMatch = firstMatch(
-            in: text,
+            in: normalizedText,
             pattern: #"(\d{1,2})\s*(?:点|时)(?:\s*(\d{1,2})\s*分?)?"#
         ) ?? firstMatch(
-            in: text,
+            in: normalizedText,
             pattern: #"(\d{1,2})\s*[:：]\s*(\d{1,2})"#
         )
 
@@ -690,6 +706,27 @@ struct MockAgentService {
         ) ?? date
     }
 
+    private func containsRequestedTime(in text: String) -> Bool {
+        if matchesAny(text, keywords: ["早上", "上午", "中午", "下午", "晚上", "今晚", "早晨"]) {
+            return true
+        }
+        return matchesRegex(
+            normalizedChineseTime(in: text),
+            pattern: #"\d{1,2}\s*(?:点|时|[:：])"#
+        )
+    }
+
+    private func normalizedChineseTime(in text: String) -> String {
+        let replacements = [
+            "十二": "12", "十一": "11", "十": "10", "九": "9", "八": "8",
+            "七": "7", "六": "6", "五": "5", "四": "4", "三": "3",
+            "二": "2", "两": "2", "一": "1", "零": "0"
+        ]
+        return replacements.reduce(text) { value, pair in
+            value.replacingOccurrences(of: pair.key, with: pair.value)
+        }
+    }
+
     private func parseExplicitMonthDay(from text: String) -> Date? {
         let calendar = Calendar.current
         let now = Date()
@@ -722,13 +759,13 @@ struct MockAgentService {
     }
 
     private func parseWeekday(from text: String) -> Date? {
-        let pattern = #"(下周)?周([一二三四五六日天])"#
-        guard let match = firstMatch(in: text, pattern: pattern), match.count == 2 else {
+        let pattern = #"(?:下周|周)([一二三四五六日天])"#
+        guard let match = firstMatch(in: text, pattern: pattern), match.count == 1 else {
             return nil
         }
 
-        let nextWeek = match[0].isEmpty == false
-        let targetToken = match[1]
+        let nextWeek = text.contains("下周")
+        let targetToken = match[0]
         let weekdayMap: [String: Int] = ["一": 2, "二": 3, "三": 4, "四": 5, "五": 6, "六": 7, "日": 1, "天": 1]
         guard let targetWeekday = weekdayMap[targetToken] else { return nil }
 
@@ -1176,11 +1213,12 @@ struct MockAgentService {
     }
 
     private func detectCompletion(from text: String) -> (target: String, confidence: Double, signals: [String])? {
-        guard matchesAny(text, keywords: ["完成", "搞定", "做完", "标记完成", "已完成"]) else {
+        guard text.contains("未完成") == false,
+              matchesAny(text, keywords: ["完成", "搞定", "做完", "标记完成", "已完成"]) else {
             return nil
         }
 
-        let target = findCompletionTarget(in: text) ?? findTargetText(in: text) ?? "当前这条"
+        let target = findTargetText(in: text) ?? findCompletionTarget(in: text) ?? "当前这条"
         return (target: target, confidence: 0.9, signals: ["complete"])
     }
 
