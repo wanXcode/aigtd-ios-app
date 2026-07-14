@@ -35,4 +35,88 @@ final class AgentDocumentContextTests: XCTestCase {
 
         XCTAssertEqual(context.prompt.count, 4_000)
     }
+
+    func testLocalFallbackUsesSnapshotReminderDataAsUnifiedInput() throws {
+        let dueDate = Calendar.current.date(byAdding: .hour, value: 1, to: .now)
+        let snapshot = makeSnapshot(
+            reminders: [
+                ReminderContextItem(
+                    id: "snapshot-reminder",
+                    title: "Snapshot 里的任务",
+                    listID: "snapshot-list",
+                    listTitle: "收集箱",
+                    dueDate: dueDate,
+                    isCompleted: false,
+                    lastModifiedAt: nil,
+                    relevanceReasons: [.today],
+                    notesPreview: nil
+                )
+            ]
+        )
+
+        let result = MockAgentService().respond(
+            to: "看看今天的任务",
+            reminderLists: [],
+            reminderItems: [],
+            contextSnapshot: snapshot
+        )
+
+        XCTAssertEqual(result.actionType, MockAgentIntent.summarizeLists.rawValue)
+        XCTAssertTrue(result.reply.contains("Snapshot 里的任务"))
+    }
+
+    func testLocalFallbackUsesStructuredPreferredNameFromSnapshot() {
+        let now = Date()
+        let preference = UserMemoryItem(
+            id: UUID(),
+            category: .preferredName,
+            value: "小万",
+            sourceMessageID: nil,
+            createdAt: now,
+            updatedAt: now
+        )
+        let snapshot = makeSnapshot(preferences: [preference])
+
+        let result = MockAgentService().respond(
+            to: "你在吗",
+            reminderLists: [],
+            reminderItems: [],
+            contextSnapshot: snapshot
+        )
+
+        XCTAssertTrue(result.reply.contains("小万"))
+    }
+
+    private func makeSnapshot(
+        reminders: [ReminderContextItem] = [],
+        preferences: [UserMemoryItem] = []
+    ) -> AgentContextSnapshot {
+        let now = Date()
+        return AgentContextSnapshot(
+            generatedAt: now,
+            timeZoneIdentifier: TimeZone.current.identifier,
+            session: SessionContext(id: UUID(), title: "测试", createdAt: now, updatedAt: now),
+            recentTurns: [],
+            sessionSummary: nil,
+            reminders: reminders,
+            references: .empty,
+            preferences: preferences,
+            documents: AgentDocumentContext(
+                prompt: "prompt",
+                memory: "memory",
+                solu: "solu",
+                operatingGuide: "guide"
+            ),
+            privacy: ContextPrivacyDescriptor(
+                includesNotes: false,
+                includesCompletedReminders: false,
+                maximumReminderCount: 40,
+                reminderSnapshotIsStale: false,
+                originalReminderCount: reminders.count,
+                includedReminderCount: reminders.count,
+                truncatedReminderCount: 0,
+                truncatedTurnCount: 0
+            )
+        )
+    }
 }

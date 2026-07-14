@@ -333,9 +333,21 @@ struct ChatHomeView: View {
 
     private func sendPrompt(_ content: String) async {
         let minimumPendingDisplayDuration = Duration.milliseconds(650)
-        if shouldRefreshContext(for: content) {
+        let traceID = UUID()
+        let refreshesContext = shouldRefreshContext(for: content)
+        if refreshesContext {
             await appModel.refreshReminderLists()
         }
+        let contextRefreshError = refreshesContext ? appModel.reminderListsErrorMessage : ""
+        AgentTraceService.shared.record(
+            traceID: traceID,
+            stage: .contextRefresh,
+            status: refreshesContext
+                ? (contextRefreshError.isEmpty ? .success : .failure)
+                : .skipped,
+            errorCategory: contextRefreshError.isEmpty ? nil : "reminders_refresh",
+            userVisibleError: contextRefreshError.nonEmpty
+        )
         let conversationHistory = recentConversationHistory
         let session: ChatSession
         if let existing = activeSession {
@@ -388,7 +400,6 @@ struct ChatHomeView: View {
         }
 
         let runtimeContext = AIGTDAgentDocumentStore.runtimeContext(from: agentDocuments)
-        let traceID = UUID()
         let contextSnapshot = makeContextSnapshot(
             session: session,
             conversationHistory: conversationHistory,
@@ -432,7 +443,8 @@ struct ChatHomeView: View {
         let executionResult = resolveExecutionResult(
             userContent: content,
             remoteResult: normalizedRemoteResult,
-            runtimeContext: runtimeContext
+            runtimeContext: runtimeContext,
+            contextSnapshot: contextSnapshot
         )
         let displayResult = resolveDisplayResult(
             remoteResult: normalizedRemoteResult,
@@ -1912,13 +1924,15 @@ struct ChatHomeView: View {
     private func resolveExecutionResult(
         userContent: String,
         remoteResult: MockAgentResult,
-        runtimeContext: AIGTDAgentRuntimeContext?
+        runtimeContext: AIGTDAgentRuntimeContext?,
+        contextSnapshot: AgentContextSnapshot?
     ) -> MockAgentResult {
         let localFallback = MockAgentService().respond(
             to: userContent,
             reminderLists: appModel.reminderLists,
             reminderItems: appModel.reminderItems,
-            agentContext: runtimeContext
+            agentContext: runtimeContext,
+            contextSnapshot: contextSnapshot
         )
         if isStructuredResult(remoteResult) {
             if remoteResult.actionType == MockAgentIntent.planReschedule.rawValue,

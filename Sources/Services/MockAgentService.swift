@@ -147,9 +147,37 @@ struct MockAgentService {
         to content: String,
         reminderLists: [ReminderListInfo],
         reminderItems: [ReminderItemInfo],
-        agentContext: AIGTDAgentRuntimeContext? = nil
+        agentContext: AIGTDAgentRuntimeContext? = nil,
+        contextSnapshot: AgentContextSnapshot? = nil
     ) -> MockAgentResult {
-        let preferredUserAddress = resolvedUserAddress(from: agentContext)
+        let snapshotItems = contextSnapshot?.reminders.map { item in
+            ReminderItemInfo(
+                id: item.id,
+                title: item.title,
+                notes: item.notesPreview ?? "",
+                dueDate: item.dueDate,
+                listTitle: item.listTitle,
+                isCompleted: item.isCompleted
+            )
+        }
+        let effectiveReminderItems = snapshotItems ?? reminderItems
+        let snapshotLists = contextSnapshot.map { snapshot in
+            Dictionary(grouping: snapshot.reminders, by: \.listTitle).map { title, items in
+                ReminderListInfo(id: items.first?.listID ?? "snapshot-list-\(title)", title: title)
+            }
+        } ?? []
+        var listsByTitle = Dictionary(uniqueKeysWithValues: reminderLists.map { ($0.title, $0) })
+        for list in snapshotLists {
+            listsByTitle[list.title] = list
+        }
+        let effectiveReminderLists = listsByTitle.values.sorted {
+            $0.title.localizedStandardCompare($1.title) == .orderedAscending
+        }
+        let effectiveAgentContext = contextSnapshot?.documents ?? agentContext
+        let preferredUserAddress = resolvedUserAddress(
+            from: effectiveAgentContext,
+            preferences: contextSnapshot?.preferences ?? []
+        )
 
         if isCasualProbe(content) {
             let action = MockAgentAction(
@@ -193,8 +221,8 @@ struct MockAgentService {
 
         if let reschedule = detectReschedule(
             from: content,
-            reminderLists: reminderLists,
-            reminderItems: reminderItems,
+            reminderLists: effectiveReminderLists,
+            reminderItems: effectiveReminderItems,
             preferredUserAddress: preferredUserAddress
         ) {
             let action = MockAgentAction(
@@ -273,7 +301,7 @@ struct MockAgentService {
             )
         }
 
-        if let reminder = detectReminderCreation(from: content, reminderLists: reminderLists) {
+        if let reminder = detectReminderCreation(from: content, reminderLists: effectiveReminderLists) {
             let action = MockAgentAction(
                 intent: .createReminder,
                 title: "创建任务",
@@ -311,8 +339,8 @@ struct MockAgentService {
 
         if let summary = detectSummaryRequest(
             from: content,
-            reminderLists: reminderLists,
-            reminderItems: reminderItems,
+            reminderLists: effectiveReminderLists,
+            reminderItems: effectiveReminderItems,
             preferredUserAddress: preferredUserAddress
         ) {
             let action = MockAgentAction(
@@ -349,7 +377,16 @@ struct MockAgentService {
         )
     }
 
-    private func resolvedUserAddress(from agentContext: AIGTDAgentRuntimeContext?) -> String {
+    private func resolvedUserAddress(
+        from agentContext: AIGTDAgentRuntimeContext?,
+        preferences: [UserMemoryItem] = []
+    ) -> String {
+        if let rawValue = preferences.first(where: { $0.category == .preferredName })?.value {
+            let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if value.isEmpty == false {
+                return value
+            }
+        }
         guard let memory = agentContext?.memory, memory.isEmpty == false else {
             return preferredUserAddress
         }

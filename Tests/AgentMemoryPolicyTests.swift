@@ -74,4 +74,16 @@ final class AgentMemoryPolicyTests: XCTestCase {
         XCTAssertEqual(candidate.value, "我的默认清单是项目")
         XCTAssertEqual(candidate.readableDescription, "默认清单：我的默认清单是项目")
     }
+
+    func testEditedMemoryStillRejectsSensitiveValues() {
+        XCTAssertEqual(
+            policy.validationErrorForEditedValue("默认联系人手机号 13800138000"),
+            .sensitiveContact
+        )
+        XCTAssertEqual(
+            policy.validationErrorForEditedValue("Authorization: Bearer private-token"),
+            .credential
+        )
+        XCTAssertNil(policy.validationErrorForEditedValue("删除任务前需要确认"))
+    }
 }

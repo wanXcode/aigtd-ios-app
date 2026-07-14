@@ -26,6 +26,17 @@ enum AgentMemoryPolicyDecision: Equatable, Sendable {
 }
 
 struct AgentMemoryPolicy: Sendable {
+    func validationErrorForEditedValue(_ value: String) -> AgentMemoryRejectionReason? {
+        let normalized = normalize(value)
+        if normalized.isEmpty { return .emptyValue }
+        if matchesAny(normalized, sensitiveContactSignals) { return .sensitiveContact }
+        if matchesAny(normalized, sensitiveAddressSignals) { return .sensitiveAddress }
+        if matchesAny(normalized, sensitiveHealthSignals) { return .sensitiveHealth }
+        if matchesAny(normalized, sensitiveFinancialSignals) { return .sensitiveFinancial }
+        if matchesAny(normalized, credentialSignals) { return .credential }
+        return nil
+    }
+
     func evaluate(message: String, sourceMessageID: UUID? = nil) -> AgentMemoryPolicyDecision {
         let normalized = normalize(message)
         guard normalized.isEmpty == false else { return .notLongTerm }

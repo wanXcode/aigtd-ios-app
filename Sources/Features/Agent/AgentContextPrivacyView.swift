@@ -8,6 +8,7 @@ struct AgentContextPrivacyView: View {
     @State private var settings = AgentContextPrivacySettings.standard
     @State private var storedContext: StoredAgentSessionContext?
     @State private var memoryItems: [UserMemoryItem] = []
+    @State private var editingMemoryItem: UserMemoryItem?
     @State private var showsClearContextConfirmation = false
     @State private var showsClearMemoryConfirmation = false
 
@@ -52,6 +53,10 @@ struct AgentContextPrivacyView: View {
                                 Text(item.value)
                             }
                             Spacer()
+                            Button("编辑") {
+                                editingMemoryItem = item
+                            }
+                            .buttonStyle(.borderless)
                             Button(role: .destructive) {
                                 AgentUserMemoryStore.shared.remove(id: item.id)
                                 refresh()
@@ -79,6 +84,11 @@ struct AgentContextPrivacyView: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text("会恢复为不含个人偏好的安全模板，不会删除聊天记录或系统提醒事项。")
+        }
+        .sheet(item: $editingMemoryItem) { item in
+            AgentMemoryEditView(item: item) {
+                refresh()
+            }
         }
     }
 
@@ -173,6 +183,59 @@ struct AgentContextPrivacyView: View {
         case .defaultList: "默认清单"
         case .workingSchedule: "工作时间偏好"
         case .transactionRule: "事务规则"
+        }
+    }
+}
+
+private struct AgentMemoryEditView: View {
+    @Environment(\.dismiss) private var dismiss
+    let item: UserMemoryItem
+    let onSave: () -> Void
+    @State private var value: String
+    @State private var validationMessage: String?
+
+    init(item: UserMemoryItem, onSave: @escaping () -> Void) {
+        self.item = item
+        self.onSave = onSave
+        _value = State(initialValue: item.value)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextEditor(text: $value)
+                        .frame(minHeight: 120)
+                } header: {
+                    Text("偏好内容")
+                } footer: {
+                    Text(validationMessage ?? "只保存稳定、可复用的规则。敏感信息请不要写入长期记忆。")
+                        .foregroundStyle(validationMessage == nil ? Color.secondary : Color.red)
+                }
+            }
+            .navigationTitle("编辑长期记忆")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") {
+                        if let reason = AgentMemoryPolicy().validationErrorForEditedValue(value) {
+                            validationMessage = reason.rawValue
+                            return
+                        }
+                        AgentUserMemoryStore.shared.upsert(
+                            category: item.category,
+                            value: value,
+                            sourceMessageID: nil
+                        )
+                        onSave()
+                        dismiss()
+                    }
+                    .disabled(value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
         }
     }
 }
