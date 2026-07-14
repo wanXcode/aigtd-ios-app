@@ -65,6 +65,18 @@ struct AgentHomeView: View {
                 }
             }
 
+            Section {
+                NavigationLink {
+                    AgentContextPrivacyView()
+                } label: {
+                    LabeledContent("上下文与隐私", value: contextPrivacySummary)
+                }
+            } header: {
+                Text("上下文与隐私")
+            } footer: {
+                Text("任务标题、清单和时间等上下文可能发送给你配置的远端模型服务商。任务备注和已完成事项默认不会发送。")
+            }
+
             Section("执行策略") {
                 Text("删除需要确认")
                 Text("新建列表需要确认")
@@ -285,6 +297,11 @@ struct AgentHomeView: View {
         return "\(diagnosticTraceCount) 条"
     }
 
+    private var contextPrivacySummary: String {
+        let settings = AgentContextPrivacyStore.shared.settings()
+        return settings.includesNotes ? "备注已允许" : "默认保护"
+    }
+
     private var fullDebugPrivacyHint: String {
         if isFullDebugEnabled {
             return "已开启：短期保存经过凭证过滤的响应与错误正文，其中仍可能包含私人聊天和任务内容。排查完成后请关闭或立即清除。"
@@ -322,6 +339,8 @@ struct AgentHomeView: View {
 
 private struct AgentDocumentEditorView: View {
     @Bindable var document: AgentDocument
+    @Environment(\.modelContext) private var modelContext
+    @State private var showsRestoreConfirmation = false
 
     var body: some View {
         Form {
@@ -339,10 +358,42 @@ private struct AgentDocumentEditorView: View {
         }
         .navigationTitle(editorTitle)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button("恢复默认", role: .destructive) {
+                        showsRestoreConfirmation = true
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+            }
+        }
+        .confirmationDialog(
+            document.kind == AIGTDAgentDocumentKind.memory.rawValue ? "清除长期记忆？" : "恢复默认内容？",
+            isPresented: $showsRestoreConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button(document.kind == AIGTDAgentDocumentKind.memory.rawValue ? "清除长期记忆" : "恢复默认", role: .destructive) {
+                restoreDefault()
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text(document.kind == AIGTDAgentDocumentKind.memory.rawValue
+                 ? "只会清除本机保存的长期偏好，不会删除聊天记录或提醒事项。"
+                 : "当前编辑内容将替换为 AIGTD 的系统默认内容。")
+        }
     }
 
     private var editorTitle: String {
         AIGTDAgentDocumentKind(rawValue: document.kind)?.title ?? document.kind
+    }
+
+    private func restoreDefault() {
+        guard let kind = AIGTDAgentDocumentKind(rawValue: document.kind) else { return }
+        document.content = kind.defaultContent
+        document.updatedAt = .now
+        try? modelContext.save()
     }
 }
 
@@ -525,6 +576,11 @@ private extension AgentTraceStage {
     var displayName: String {
         switch self {
         case .inputReceived: "收到输入"
+        case .contextRefresh: "刷新上下文"
+        case .contextBuild: "构建上下文"
+        case .referenceResolution: "解析引用"
+        case .sessionSummaryUpdate: "更新会话摘要"
+        case .memoryUpdate: "更新长期记忆"
         case .localPreviewCompleted: "本地预判"
         case .remoteRequestStarted: "远端请求"
         case .remoteResponseReceived: "收到回复"

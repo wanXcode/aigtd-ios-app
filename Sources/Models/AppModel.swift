@@ -104,13 +104,13 @@ final class AppModel {
         defer { isLoadingReminderLists = false }
 
         do {
-            reminderLists = try ReminderStoreService().fetchReminderLists()
-            reminderItems = try await ReminderStoreService().fetchReminderItems()
+            let refreshedLists = try ReminderStoreService().fetchReminderLists()
+            let refreshedItems = try await ReminderStoreService().fetchReminderItems()
+            reminderLists = refreshedLists
+            reminderItems = refreshedItems
             reminderListsErrorMessage = ""
             lastReminderSyncAt = .now
         } catch {
-            reminderLists = []
-            reminderItems = []
             reminderListsErrorMessage = error.localizedDescription
         }
     }

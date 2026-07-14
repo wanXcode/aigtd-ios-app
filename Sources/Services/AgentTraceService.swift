@@ -3,6 +3,11 @@ import Foundation
 
 enum AgentTraceStage: String, Codable, CaseIterable, Sendable {
     case inputReceived = "input_received"
+    case contextRefresh = "context_refresh"
+    case contextBuild = "context_build"
+    case referenceResolution = "reference_resolution"
+    case sessionSummaryUpdate = "session_summary_update"
+    case memoryUpdate = "memory_update"
     case localPreviewCompleted = "local_preview_completed"
     case remoteRequestStarted = "remote_request_started"
     case remoteResponseReceived = "remote_response_received"

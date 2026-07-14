@@ -43,11 +43,9 @@ enum AIGTDAgentDocumentKind: String, CaseIterable {
             return """
             # AIGTD Memory
 
-            - 用户称呼：哥哥
-            - 默认时区：Asia/Shanghai
-            - 提到待办、清单、今天、明天、提醒事项时，默认按事务管理来理解
-            - 行为偏好：少追问，先执行，再解释
-            - 最多做 1~2 轮必要澄清，超过后按合理默认值先落任务
+            暂无用户明确保存的长期偏好。
+
+            只有用户明确说“以后”“默认”“总是”或“记住”时，才在确认后保存稳定偏好。
             """
         case .solu:
             return """
@@ -91,12 +89,15 @@ enum AIGTDAgentDocumentStore {
         try? context.save()
     }
 
-    static func runtimeContext(from documents: [AgentDocument]) -> AIGTDAgentRuntimeContext {
+    static func runtimeContext(from documents: [AgentDocument]) -> AgentDocumentContext {
         func content(for kind: AIGTDAgentDocumentKind) -> String {
-            documents.first(where: { $0.kind == kind.rawValue })?.content ?? kind.defaultContent
+            let stored = documents.first(where: { $0.kind == kind.rawValue })?.content
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let resolved = stored.isEmpty ? kind.defaultContent : stored
+            return String(resolved.prefix(4_000))
         }
 
-        return AIGTDAgentRuntimeContext(
+        return AgentDocumentContext(
             prompt: content(for: .prompt),
             memory: content(for: .memory),
             solu: content(for: .solu),
@@ -105,9 +106,4 @@ enum AIGTDAgentDocumentStore {
     }
 }
 
-struct AIGTDAgentRuntimeContext: Sendable {
-    let prompt: String
-    let memory: String
-    let solu: String
-    let operatingGuide: String
-}
+typealias AIGTDAgentRuntimeContext = AgentDocumentContext

@@ -2,7 +2,44 @@
 
 ## Unreleased
 
-Development continues after the `0.3.0` stabilization candidate. Planned work is tracked in the version roadmap and release PRD.
+Development continues after the `0.4.0` context-and-memory candidate.
+
+## 0.4.0 - Release Candidate
+
+Context and memory release candidate validated through build `0.4.0 (17)`.
+
+### Added
+
+- added a versioned, immutable `AgentContextSnapshot` for every model request
+- added per-session summaries and stable references for recently created, modified, moved, completed, shown, and selected reminders
+- added deterministic reference resolution for stable IDs, ordinal phrases such as “第二条”, stale targets, and duplicate titles
+- added explicit long-term preference detection with whitelist and sensitive-data rejection rules
+- added Agent context and privacy controls for notes, completed reminders, task limits, local context, and saved memory
+- added context, reference, summary, and memory diagnostic stages without persisting private source content by default
+- added offline context, memory, privacy, reference, and persistence test suites
+
+### Improved
+
+- all four Agent documents now enter the runtime prompt, with safe defaults and independent 4,000-character budgets
+- task context now carries stable Reminder IDs, list, due date, completion state, relevance reason, and optional note preview
+- successful reminder actions now write their returned EventKit IDs back to session context
+- reminder refresh failures preserve the last successful snapshot instead of clearing visible tasks
+- long conversations retain deterministic goals, scopes, confirmed constraints, successful action facts, and related IDs
+
+### Safety
+
+- explicit or stale Reminder IDs never silently fall back to fuzzy title matching
+- duplicate-title actions stop when a unique target cannot be established
+- stable IDs are cross-checked against explicit titles and references, and resolved actions execute by identifier
+- saved delete-confirmation rules are enforced locally before EventKit mutation
+- task notes and completed reminders remain excluded from remote context unless the user opts in
+- ordinary chat, one-time tasks, emotions, credentials, contact details, addresses, health data, and financial data are not saved as long-term memory
+
+### Validation
+
+- passed the previous full iPhone suite with 71 tests and 0 failures; the expanded 77-test candidate compiles and awaits an unlocked-device run
+- retained the original 100-case conversation evaluation baseline
+- added a separate 50-case context and memory evaluation fixture
 
 ## 0.3.0 - Release Candidate
 

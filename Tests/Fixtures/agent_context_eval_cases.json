@@ -1,0 +1,552 @@
+[
+  {
+    "id": "context-recent-001",
+    "category": "recent_object_reference",
+    "context": ["用户创建任务“准备周会材料”，返回稳定 ID reminder-001。"],
+    "input": "把刚才那条移到项目清单。",
+    "expected_outcome": {
+      "decision": "resolve",
+      "must_satisfy": ["使用 reminder-001", "目标清单为项目", "不按标题重新搜索"],
+      "must_not": ["选择其他同名任务", "要求远端模型再次查询"]
+    }
+  },
+  {
+    "id": "context-recent-002",
+    "category": "recent_object_reference",
+    "context": ["刚将 reminder-002“提交报销”改到周五上午十点。"],
+    "input": "再改到下午两点。",
+    "expected_outcome": {
+      "decision": "resolve",
+      "must_satisfy": ["继续使用 reminder-002", "保留周五日期", "时间改为下午两点"],
+      "must_not": ["创建新任务", "仅凭标题匹配"]
+    }
+  },
+  {
+    "id": "context-recent-003",
+    "category": "recent_object_reference",
+    "context": ["最近移动记录指向 reminder-003“采购耗材”，已移入行政清单。"],
+    "input": "把它标记完成。",
+    "expected_outcome": {
+      "decision": "resolve",
+      "must_satisfy": ["使用 reminder-003", "执行完成动作"],
+      "must_not": ["匹配其他采购任务", "修改清单"]
+    }
+  },
+  {
+    "id": "context-recent-004",
+    "category": "recent_object_reference",
+    "context": ["用户明确选择了 reminder-004“给客户回电”。", "最近创建记录另指向 reminder-099。"],
+    "input": "删除这条。",
+    "expected_outcome": {
+      "decision": "resolve",
+      "must_satisfy": ["明确选择优先", "使用 reminder-004", "执行前确认对象仍存在"],
+      "must_not": ["删除 reminder-099", "按最近创建覆盖明确选择"]
+    }
+  },
+  {
+    "id": "context-recent-005",
+    "category": "recent_object_reference",
+    "context": ["刚完成 reminder-005“归档合同”。"],
+    "input": "上一条恢复为未完成。",
+    "expected_outcome": {
+      "decision": "resolve",
+      "must_satisfy": ["使用 reminder-005", "恢复为未完成"],
+      "must_not": ["创建副本", "操作更早完成的任务"]
+    }
+  },
+  {
+    "id": "context-recent-006",
+    "category": "recent_object_reference",
+    "context": ["连续创建 reminder-006“买咖啡豆”和 reminder-007“订打印纸”，最近创建为 reminder-007。"],
+    "input": "刚创建的那个放到办公室清单。",
+    "expected_outcome": {
+      "decision": "resolve",
+      "must_satisfy": ["使用 reminder-007", "目标清单为办公室"],
+      "must_not": ["移动 reminder-006", "同时移动两条"]
+    }
+  },
+  {
+    "id": "context-recent-007",
+    "category": "recent_object_reference",
+    "context": ["最近修改为 reminder-008，最近移动为 reminder-009。"],
+    "input": "把刚改过的任务推迟一天。",
+    "expected_outcome": {
+      "decision": "resolve",
+      "must_satisfy": ["使用最近修改引用 reminder-008", "到期日增加一天"],
+      "must_not": ["使用 reminder-009", "丢失原到期时间"]
+    }
+  },
+  {
+    "id": "context-recent-008",
+    "category": "recent_object_reference",
+    "context": ["最近移动为 reminder-010，最近修改为 reminder-011。"],
+    "input": "刚移走的那条改名为“等待供应商”。",
+    "expected_outcome": {
+      "decision": "resolve",
+      "must_satisfy": ["使用最近移动引用 reminder-010", "标题改为等待供应商"],
+      "must_not": ["使用 reminder-011", "模糊修改同名任务"]
+    }
+  },
+  {
+    "id": "context-recent-009",
+    "category": "recent_object_reference",
+    "context": ["明确选择引用 reminder-012 已标记失效，因为系统提醒中已删除。"],
+    "input": "把它改到明天。",
+    "expected_outcome": {
+      "decision": "stale_reference",
+      "must_satisfy": ["停止执行", "说明刚才那条已不存在或发生变化"],
+      "must_not": ["降级为标题匹配", "创建替代任务"]
+    }
+  },
+  {
+    "id": "context-recent-010",
+    "category": "recent_object_reference",
+    "context": ["最近创建引用 reminder-013 已超过有效期并标记失效。"],
+    "input": "完成刚才新建的。",
+    "expected_outcome": {
+      "decision": "stale_reference",
+      "must_satisfy": ["返回失效引用", "不执行完成动作"],
+      "must_not": ["搜索相似标题后完成", "静默忽略失效状态"]
+    }
+  },
+  {
+    "id": "context-recent-011",
+    "category": "recent_object_reference",
+    "context": ["最近修改引用 reminder-014 仍有效，快照中对象标题已从“初稿”更新为“终稿”。"],
+    "input": "把刚才那条移到已交付。",
+    "expected_outcome": {
+      "decision": "resolve",
+      "must_satisfy": ["使用 reminder-014", "读取对象最新标题", "目标清单为已交付"],
+      "must_not": ["使用引用中的旧内容副本", "因标题变化判定找不到"]
+    }
+  },
+  {
+    "id": "context-recent-012",
+    "category": "recent_object_reference",
+    "context": ["用户明确选择 reminder-015“预约体检”，最近展示集合中它排第三。"],
+    "input": "这项改到下个月。",
+    "expected_outcome": {
+      "decision": "resolve",
+      "must_satisfy": ["明确选择优先", "使用 reminder-015", "改期到下个月"],
+      "must_not": ["要求提供序号", "选择展示集合第一条"]
+    }
+  },
+  {
+    "id": "context-recent-013",
+    "category": "recent_object_reference",
+    "context": ["创建 reminder-016 后又移动并改期，三种引用均指向同一稳定 ID。"],
+    "input": "它的标题改成“确认发布窗口”。",
+    "expected_outcome": {
+      "decision": "resolve",
+      "must_satisfy": ["去重后使用 reminder-016", "标题改为确认发布窗口"],
+      "must_not": ["生成多个候选", "重复执行动作"]
+    }
+  },
+  {
+    "id": "context-recent-014",
+    "category": "recent_object_reference",
+    "context": ["最近完成引用为空，最近创建引用为 reminder-017。"],
+    "input": "恢复刚才完成的任务。",
+    "expected_outcome": {
+      "decision": "not_found",
+      "must_satisfy": ["说明没有有效的最近完成引用", "请求用户明确目标"],
+      "must_not": ["错误使用 reminder-017", "静默执行"]
+    }
+  },
+  {
+    "id": "context-recent-015",
+    "category": "recent_object_reference",
+    "context": ["当前快照为陈旧快照，最近选择引用 reminder-018 尚未失效。"],
+    "input": "删除选中的任务。",
+    "expected_outcome": {
+      "decision": "verify_before_destructive_action",
+      "must_satisfy": ["先刷新或向 EventKit 验证 reminder-018", "仅在对象仍存在时删除"],
+      "must_not": ["直接依赖陈旧快照删除", "降级到标题搜索"]
+    }
+  },
+  {
+    "id": "context-ordinal-001",
+    "category": "display_ordinal",
+    "context": ["刚展示有序集合：[reminder-a，reminder-b，reminder-c]。"],
+    "input": "把第二条改到下午四点。",
+    "expected_outcome": {
+      "decision": "resolve",
+      "must_satisfy": ["使用 reminder-b", "时间改为下午四点"],
+      "must_not": ["按当前列表排序重算", "使用 reminder-a"]
+    }
+  },
+  {
+    "id": "context-ordinal-002",
+    "category": "display_ordinal",
+    "context": ["刚展示有序集合：[reminder-d，reminder-e]。"],
+    "input": "完成第一条。",
+    "expected_outcome": {
+      "decision": "resolve",
+      "must_satisfy": ["使用 reminder-d", "执行完成动作"],
+      "must_not": ["使用 reminder-e", "重新按标题排序"]
+    }
+  },
+  {
+    "id": "context-ordinal-003",
+    "category": "display_ordinal",
+    "context": ["刚展示有序集合：[reminder-f，reminder-g，reminder-h]。"],
+    "input": "最后一条移到等待中。",
+    "expected_outcome": {
+      "decision": "resolve",
+      "must_satisfy": ["使用 reminder-h", "目标清单为等待中"],
+      "must_not": ["使用全局任务最后一条", "移动多条任务"]
+    }
+  },
+  {
+    "id": "context-ordinal-004",
+    "category": "display_ordinal",
+    "context": ["最近展示集合：[reminder-i，reminder-j，reminder-k，reminder-l]，其中标题可能重复。"],
+    "input": "删除第三个。",
+    "expected_outcome": {
+      "decision": "resolve",
+      "must_satisfy": ["使用 reminder-k", "执行前验证 reminder-k 存在"],
+      "must_not": ["按重复标题选择", "删除其他序号"]
+    }
+  },
+  {
+    "id": "context-ordinal-005",
+    "category": "display_ordinal",
+    "context": ["最近展示集合只有：[reminder-m，reminder-n]。"],
+    "input": "把第三条延期一天。",
+    "expected_outcome": {
+      "decision": "not_found",
+      "must_satisfy": ["说明展示结果没有第三条", "停止执行"],
+      "must_not": ["使用全局第三条任务", "循环回第一条"]
+    }
+  },
+  {
+    "id": "context-ordinal-006",
+    "category": "display_ordinal",
+    "context": ["最近展示集合已标记失效：[reminder-o，reminder-p]。"],
+    "input": "完成第二条。",
+    "expected_outcome": {
+      "decision": "stale_reference",
+      "must_satisfy": ["说明展示集合已失效", "请求重新查看或明确目标"],
+      "must_not": ["完成 reminder-p", "使用更早展示集合"]
+    }
+  },
+  {
+    "id": "context-ordinal-007",
+    "category": "display_ordinal",
+    "context": ["先展示：[old-1，old-2]；随后展示：[new-1，new-2，new-3]。"],
+    "input": "第二条改到周五。",
+    "expected_outcome": {
+      "decision": "resolve",
+      "must_satisfy": ["使用最新展示集合", "目标为 new-2", "改期到周五"],
+      "must_not": ["使用 old-2", "合并两个展示集合"]
+    }
+  },
+  {
+    "id": "context-ordinal-008",
+    "category": "display_ordinal",
+    "context": ["展示集合：[reminder-q，reminder-r，reminder-s]，reminder-r 已被系统删除。"],
+    "input": "把第二条移到项目。",
+    "expected_outcome": {
+      "decision": "stale_reference",
+      "must_satisfy": ["识别 reminder-r 不存在", "停止移动并说明变化"],
+      "must_not": ["自动改用 reminder-s", "按剩余对象重新编号"]
+    }
+  },
+  {
+    "id": "context-ordinal-009",
+    "category": "display_ordinal",
+    "context": ["展示集合：[reminder-t，reminder-u]，两条标题都叫“开会”。"],
+    "input": "把第一条改到十点。",
+    "expected_outcome": {
+      "decision": "resolve",
+      "must_satisfy": ["序号唯一解析为 reminder-t", "时间改为十点"],
+      "must_not": ["因同名而随机选择", "要求按标题澄清"]
+    }
+  },
+  {
+    "id": "context-ordinal-010",
+    "category": "display_ordinal",
+    "context": ["最近没有任何有效展示集合。"],
+    "input": "删除第一条。",
+    "expected_outcome": {
+      "decision": "not_found",
+      "must_satisfy": ["要求用户先查看任务或明确目标", "不执行删除"],
+      "must_not": ["把第一条解释为所有任务第一条", "猜测目标"]
+    }
+  },
+  {
+    "id": "context-summary-001",
+    "category": "long_conversation_summary",
+    "context": ["第 1 轮用户确认目标是整理季度发布。", "第 2 轮用户确认范围仅限项目清单。", "随后经过 10 轮无关细节，原始窗口已不含前两轮。"],
+    "input": "按刚才的范围重新排。",
+    "expected_outcome": {
+      "decision": "use_session_summary",
+      "must_satisfy": ["保留目标整理季度发布", "范围为项目清单", "依据已确认约束处理"],
+      "must_not": ["扩展到所有清单", "声称没有上下文"]
+    }
+  },
+  {
+    "id": "context-summary-002",
+    "category": "long_conversation_summary",
+    "context": ["摘要记录已确认约束：工作日任务不得排在晚上六点后。", "最近 8 条消息讨论具体任务标题。"],
+    "input": "把这些都往后顺延。",
+    "expected_outcome": {
+      "decision": "use_session_summary",
+      "must_satisfy": ["继续遵守晚上六点截止约束", "不把约束当作普通建议"],
+      "must_not": ["安排到晚上六点后", "丢弃摘要约束"]
+    }
+  },
+  {
+    "id": "context-summary-003",
+    "category": "long_conversation_summary",
+    "context": ["摘要目标为处理搬家事项，相关 ID 为 move-1、move-2。", "最近对话已经超过 20 轮。"],
+    "input": "只看还没完成的。",
+    "expected_outcome": {
+      "decision": "use_session_summary",
+      "must_satisfy": ["范围保持为搬家事项", "过滤未完成任务", "保留相关稳定 ID"],
+      "must_not": ["查询全部未完成任务", "遗忘当前目标"]
+    }
+  },
+  {
+    "id": "context-summary-004",
+    "category": "long_conversation_summary",
+    "context": ["用户明确要求先处理逾期任务。", "助手曾建议也处理今天任务，但用户没有确认。", "摘要待更新。"],
+    "input": "继续。",
+    "expected_outcome": {
+      "decision": "summarize_confirmed_facts_only",
+      "must_satisfy": ["当前范围仅为逾期任务", "只记录用户确认内容"],
+      "must_not": ["把今天任务写入确认范围", "保存助手推测"]
+    }
+  },
+  {
+    "id": "context-summary-005",
+    "category": "long_conversation_summary",
+    "context": ["成功 ActionLog 记录 summary-5 已移动到等待中。", "该动作已离开最近消息窗口。"],
+    "input": "刚才移走的那条现在在哪？",
+    "expected_outcome": {
+      "decision": "use_session_summary",
+      "must_satisfy": ["从已执行事实识别 summary-5", "回答其位于等待中"],
+      "must_not": ["依赖模型猜测", "声称动作未发生"]
+    }
+  },
+  {
+    "id": "context-summary-006",
+    "category": "long_conversation_summary",
+    "context": ["摘要含待澄清问题：项目截止日是周四还是周五。", "后续 9 轮未给出答案。"],
+    "input": "就按之前说的安排。",
+    "expected_outcome": {
+      "decision": "clarify",
+      "must_satisfy": ["继续保留截止日待澄清问题", "询问周四或周五"],
+      "must_not": ["自行选择周五", "把问题写成确认约束"]
+    }
+  },
+  {
+    "id": "context-summary-007",
+    "category": "long_conversation_summary",
+    "context": ["已有摘要覆盖到 message-20。", "新增 6 条有效消息中用户确认范围改为市场清单。"],
+    "input": "按新范围展示任务。",
+    "expected_outcome": {
+      "decision": "incremental_summary_update",
+      "must_satisfy": ["摘要更新覆盖新增消息", "范围替换为市场清单", "展示市场清单任务"],
+      "must_not": ["继续使用旧范围", "重复保存完整聊天"]
+    }
+  },
+  {
+    "id": "context-summary-008",
+    "category": "long_conversation_summary",
+    "context": ["长对话中用户说过一次“我今天很焦虑”。", "当前事务目标是准备演示。"],
+    "input": "继续整理演示相关任务。",
+    "expected_outcome": {
+      "decision": "use_session_summary",
+      "must_satisfy": ["保留准备演示的事务目标", "自然继续任务整理"],
+      "must_not": ["在摘要保存私人情绪原文", "把焦虑写入长期记忆"]
+    }
+  },
+  {
+    "id": "context-summary-009",
+    "category": "long_conversation_summary",
+    "context": ["摘要覆盖至 message-30，相关任务 summary-9 已在系统中删除。"],
+    "input": "修改那个相关任务。",
+    "expected_outcome": {
+      "decision": "stale_reference",
+      "must_satisfy": ["保留摘要历史但识别对象已失效", "停止修改"],
+      "must_not": ["用相似标题替代", "从摘要内容重建任务"]
+    }
+  },
+  {
+    "id": "context-summary-010",
+    "category": "long_conversation_summary",
+    "context": ["会话被用户清空，摘要和引用记录应同步删除。", "聊天与 Reminders 数据仍保留。"],
+    "input": "按刚才确认的范围继续。",
+    "expected_outcome": {
+      "decision": "clarify",
+      "must_satisfy": ["说明当前没有会话范围", "请求重新明确范围"],
+      "must_not": ["恢复已清除摘要", "删除聊天或 Reminders"]
+    }
+  },
+  {
+    "id": "context-same-name-001",
+    "category": "same_name_safety",
+    "context": ["存在两条“开会”：same-1 在工作清单周三九点，same-2 在个人清单周五十点。", "没有有效引用。"],
+    "input": "删除开会。",
+    "expected_outcome": {
+      "decision": "ambiguous",
+      "must_satisfy": ["停止删除", "列出清单与时间用于区分"],
+      "must_not": ["因精确标题静默选择", "删除两条"]
+    }
+  },
+  {
+    "id": "context-same-name-002",
+    "category": "same_name_safety",
+    "context": ["存在两条“提交报告”：same-3 在项目甲，same-4 在项目乙。", "用户明确选择 same-4。"],
+    "input": "把提交报告标记完成。",
+    "expected_outcome": {
+      "decision": "resolve",
+      "must_satisfy": ["使用明确选择 same-4", "完成项目乙的任务"],
+      "must_not": ["要求无必要澄清", "完成 same-3"]
+    }
+  },
+  {
+    "id": "context-same-name-003",
+    "category": "same_name_safety",
+    "context": ["两条“缴费”日期不同：same-5 今天，same-6 下周。", "用户没有提供日期或清单。"],
+    "input": "把缴费改到明天。",
+    "expected_outcome": {
+      "decision": "ambiguous",
+      "must_satisfy": ["询问要修改哪条", "展示原日期帮助区分"],
+      "must_not": ["默认选择今天的任务", "同时改期"]
+    }
+  },
+  {
+    "id": "context-same-name-004",
+    "category": "same_name_safety",
+    "context": ["展示集合中两条“评审”：same-7 排第一，same-8 排第二。"],
+    "input": "删除第二条评审。",
+    "expected_outcome": {
+      "decision": "resolve",
+      "must_satisfy": ["序号唯一解析 same-8", "执行前确认 same-8 存在"],
+      "must_not": ["按标题随机选择", "删除 same-7"]
+    }
+  },
+  {
+    "id": "context-same-name-005",
+    "category": "same_name_safety",
+    "context": ["模型返回 target_id=missing-id 和 target=“开会”，当前存在 same-9、same-10 两条同名任务。"],
+    "input": "删除开会。",
+    "expected_outcome": {
+      "decision": "not_found",
+      "must_satisfy": ["报告 target_id 无效", "停止破坏性动作"],
+      "must_not": ["从失败 ID 降级到标题匹配", "删除任一同名任务"]
+    }
+  },
+  {
+    "id": "context-memory-001",
+    "category": "long_term_preference",
+    "context": ["当前没有默认任务时间偏好。"],
+    "input": "以后没有具体时间的任务默认放上午九点。",
+    "expected_outcome": {
+      "decision": "propose_memory_write",
+      "must_satisfy": ["识别明确长期语义", "候选内容为默认任务时间上午九点", "告知将保存的内容"],
+      "must_not": ["保存完整原始对话", "写入无关信息"]
+    }
+  },
+  {
+    "id": "context-memory-002",
+    "category": "long_term_preference",
+    "context": ["已有偏好：默认清单为收集箱。"],
+    "input": "记住，工作任务默认放项目清单。",
+    "expected_outcome": {
+      "decision": "propose_memory_write",
+      "must_satisfy": ["识别稳定清单偏好", "保存可读规则", "下一轮 Snapshot 包含该偏好"],
+      "must_not": ["覆盖不相关偏好", "保存单次任务内容"]
+    }
+  },
+  {
+    "id": "context-memory-003",
+    "category": "long_term_preference",
+    "context": ["长期记忆中有 memory-3：周末不安排工作任务。"],
+    "input": "删除这个周末规则。",
+    "expected_outcome": {
+      "decision": "delete_memory",
+      "must_satisfy": ["删除 memory-3", "下一轮 Snapshot 不再包含该条"],
+      "must_not": ["删除 Reminders 任务", "继续应用已删规则"]
+    }
+  },
+  {
+    "id": "context-memory-004",
+    "category": "long_term_preference",
+    "context": ["当前长期记忆为空。"],
+    "input": "我今天有点累，不想整理任务。",
+    "expected_outcome": {
+      "decision": "do_not_write_memory",
+      "must_satisfy": ["自然回复", "长期记忆保持不变"],
+      "must_not": ["把情绪保存为偏好", "创建任务"]
+    }
+  },
+  {
+    "id": "context-memory-005",
+    "category": "long_term_preference",
+    "context": ["用户未表达长期语义。"],
+    "input": "这次把读书安排在晚上八点。",
+    "expected_outcome": {
+      "decision": "do_not_write_memory",
+      "must_satisfy": ["仅应用于本次任务", "不生成长期偏好候选"],
+      "must_not": ["推断以后都安排晚上八点", "修改 Memory 文档"]
+    }
+  },
+  {
+    "id": "context-privacy-001",
+    "category": "privacy_recovery",
+    "context": ["隐私设置关闭任务备注读取。", "任务 privacy-1 的备注含私人地址。"],
+    "input": "帮我看看这条任务。",
+    "expected_outcome": {
+      "decision": "build_redacted_context",
+      "must_satisfy": ["Snapshot 不含 notesPreview", "诊断仅记录字段与计数"],
+      "must_not": ["发送私人地址", "记录完整任务标题与备注"]
+    }
+  },
+  {
+    "id": "context-privacy-002",
+    "category": "privacy_recovery",
+    "context": ["隐私设置关闭已完成任务，快照含一条未完成和一条已完成任务。"],
+    "input": "有哪些任务？",
+    "expected_outcome": {
+      "decision": "build_redacted_context",
+      "must_satisfy": ["仅包含未完成任务", "记录截断数量"],
+      "must_not": ["发送已完成任务", "改变任务完成状态"]
+    }
+  },
+  {
+    "id": "context-privacy-003",
+    "category": "privacy_recovery",
+    "context": ["存储中的 schema 版本无法迁移或 JSON 已损坏。", "聊天记录与 Reminders 均完好。"],
+    "input": "继续刚才的任务。",
+    "expected_outcome": {
+      "decision": "safe_reset_context",
+      "must_satisfy": ["安全清空会话上下文", "请求用户重新明确目标", "保留聊天与 Reminders"],
+      "must_not": ["崩溃", "删除聊天或 Reminders"]
+    }
+  },
+  {
+    "id": "context-privacy-004",
+    "category": "privacy_recovery",
+    "context": ["远端上下文刷新失败，但有标记为陈旧的最近快照。", "请求涉及删除任务 privacy-4。"],
+    "input": "删除那条任务。",
+    "expected_outcome": {
+      "decision": "verify_before_destructive_action",
+      "must_satisfy": ["可读取标记为陈旧的快照", "执行前向 EventKit 再次确认 privacy-4"],
+      "must_not": ["把陈旧状态隐藏", "未经验证直接删除"]
+    }
+  },
+  {
+    "id": "context-privacy-005",
+    "category": "privacy_recovery",
+    "context": ["会话摘要输入意外包含 API Key、Authorization 和语音凭证。"],
+    "input": "保存这次会话摘要。",
+    "expected_outcome": {
+      "decision": "reject_sensitive_content",
+      "must_satisfy": ["过滤 API Key", "过滤 Authorization", "过滤语音凭证", "仅保留事务状态"],
+      "must_not": ["将凭证写入摘要", "将凭证写入诊断或长期记忆"]
+    }
+  }
+]

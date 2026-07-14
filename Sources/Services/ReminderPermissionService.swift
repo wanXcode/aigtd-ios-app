@@ -548,6 +548,24 @@ struct ReminderStoreService {
     }
 
     @discardableResult
+    func moveReminder(identifier: String, destinationListName: String) throws -> String {
+        let store = try authorizedStore()
+        store.refreshSourcesIfNecessary()
+
+        let calendars = store.calendars(for: .reminder)
+        guard let destination = calendars.first(where: { normalize($0.title) == normalize(destinationListName) }) else {
+            throw ReminderStoreError.listNotFound(destinationListName)
+        }
+        guard let reminder = store.calendarItem(withIdentifier: identifier) as? EKReminder else {
+            throw ReminderStoreError.reminderNotFound(identifier)
+        }
+
+        reminder.calendar = destination
+        try store.save(reminder, commit: true)
+        return reminder.calendarItemIdentifier
+    }
+
+    @discardableResult
     func completeReminder(targetText: String) async throws -> String {
         let store = try authorizedStore()
         store.refreshSourcesIfNecessary()

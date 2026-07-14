@@ -11,7 +11,7 @@ struct AgentModelConfiguration: Sendable {
     let timeoutSeconds: Double
 }
 
-struct AgentConversationTurn: Sendable {
+struct AgentConversationTurn: Codable, Equatable, Sendable {
     let role: String
     let text: String
 }
@@ -24,6 +24,7 @@ struct AgentRuntimeService {
         configuration: AgentModelConfiguration?,
         agentContext: AIGTDAgentRuntimeContext? = nil,
         conversationHistory: [AgentConversationTurn] = [],
+        contextSnapshot: AgentContextSnapshot? = nil,
         traceID: UUID? = nil,
         onTextUpdate: (@MainActor @Sendable (String) async -> Void)? = nil
     ) async -> MockAgentResult {
@@ -64,6 +65,7 @@ struct AgentRuntimeService {
                 configuration: configuration,
                 agentContext: agentContext,
                 conversationHistory: conversationHistory,
+                contextSnapshot: contextSnapshot,
                 traceID: activeTraceID,
                 onTextUpdate: onTextUpdate
             )
@@ -148,6 +150,7 @@ struct AgentRuntimeService {
         configuration: AgentModelConfiguration,
         agentContext: AIGTDAgentRuntimeContext?,
         conversationHistory: [AgentConversationTurn],
+        contextSnapshot: AgentContextSnapshot?,
         traceID: UUID,
         onTextUpdate: (@MainActor @Sendable (String) async -> Void)?
     ) async throws -> MockAgentResult {
@@ -159,6 +162,7 @@ struct AgentRuntimeService {
                 configuration: configuration,
                 agentContext: agentContext,
                 conversationHistory: conversationHistory,
+                contextSnapshot: contextSnapshot,
                 traceID: traceID,
                 onTextUpdate: onTextUpdate
             )
@@ -171,7 +175,8 @@ struct AgentRuntimeService {
             reminderItems: reminderItems,
             configuration: configuration,
             agentContext: agentContext,
-            conversationHistory: conversationHistory
+            conversationHistory: conversationHistory,
+            contextSnapshot: contextSnapshot
         )
         let sessionConfiguration = URLSessionConfiguration.ephemeral
         sessionConfiguration.timeoutIntervalForRequest = configuration.timeoutSeconds
@@ -260,6 +265,7 @@ struct AgentRuntimeService {
         configuration: AgentModelConfiguration,
         agentContext: AIGTDAgentRuntimeContext?,
         conversationHistory: [AgentConversationTurn],
+        contextSnapshot: AgentContextSnapshot?,
         traceID: UUID,
         onTextUpdate: (@MainActor @Sendable (String) async -> Void)?
     ) async throws -> MockAgentResult {
@@ -271,6 +277,7 @@ struct AgentRuntimeService {
             configuration: configuration,
             agentContext: agentContext,
             conversationHistory: conversationHistory,
+            contextSnapshot: contextSnapshot,
             forceStreaming: true
         )
         let sessionConfiguration = URLSessionConfiguration.ephemeral
@@ -417,6 +424,7 @@ struct AgentRuntimeService {
         configuration: AgentModelConfiguration,
         agentContext: AIGTDAgentRuntimeContext?,
         conversationHistory: [AgentConversationTurn],
+        contextSnapshot: AgentContextSnapshot?,
         forceStreaming: Bool = false
     ) throws -> URLRequest {
         let endpoint = normalizedEndpoint(from: configuration)
@@ -429,7 +437,8 @@ struct AgentRuntimeService {
             availableLists: availableLists,
             reminderItems: reminderItems,
             agentContext: agentContext,
-            conversationHistory: conversationHistory
+            conversationHistory: conversationHistory,
+            contextSnapshot: contextSnapshot
         )
 
         var request = URLRequest(url: url)
@@ -449,19 +458,29 @@ struct AgentRuntimeService {
         availableLists: String,
         reminderItems: [ReminderItemInfo],
         agentContext: AIGTDAgentRuntimeContext?,
-        conversationHistory: [AgentConversationTurn]
+        conversationHistory: [AgentConversationTurn],
+        contextSnapshot: AgentContextSnapshot?
     ) -> String {
         let now = Date()
         let currentTimeZone = TimeZone.current
         let isoFormatter = ISO8601DateFormatter()
         let currentTimestamp = isoFormatter.string(from: now)
         let displayTimestamp = now.formatted(date: .complete, time: .shortened)
-        let openItemCount = reminderItems.filter { !$0.isCompleted }.count
-        let todayItems = reminderItems.filter { item in
+        let snapshotItems = contextSnapshot?.reminders
+        let openItemCount = snapshotItems?.filter { !$0.isCompleted }.count
+            ?? reminderItems.filter { !$0.isCompleted }.count
+        let todayItemCount = snapshotItems?.filter { item in
             guard let dueDate = item.dueDate else { return false }
             return Calendar.current.isDateInToday(dueDate)
-        }
-        let recentPreview = reminderItems
+        }.count ?? reminderItems.filter { item in
+            guard let dueDate = item.dueDate else { return false }
+            return Calendar.current.isDateInToday(dueDate)
+        }.count
+        let recentPreview = snapshotItems?.map { item in
+            let date = item.dueDate?.formatted(date: .abbreviated, time: .shortened) ?? "无时间"
+            let note = item.notesPreview.map { " · 备注：\($0)" } ?? ""
+            return "- id=\(item.id) · \(item.title) · \(item.listTitle) · \(date)\(note)"
+        }.joined(separator: "\n") ?? reminderItems
             .filter { !$0.isCompleted }
             .prefix(8)
             .map { item in
@@ -470,9 +489,15 @@ struct AgentRuntimeService {
             }
             .joined(separator: "\n")
 
-        let memoryBlock = agentContext?.memory.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let operatingGuideBlock = agentContext?.operatingGuide.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let conversationBlock = formattedConversationWindow(conversationHistory)
+        let documents = contextSnapshot?.documents ?? agentContext
+        let promptBlock = documents?.prompt.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let memoryBlock = documents?.memory.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let soluBlock = documents?.solu.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let operatingGuideBlock = documents?.operatingGuide.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let conversationBlock = formattedConversationWindow(contextSnapshot?.recentTurns ?? conversationHistory)
+        let summaryBlock = formattedSessionSummary(contextSnapshot?.sessionSummary)
+        let referenceBlock = formattedReferences(contextSnapshot?.references)
+        let preferenceBlock = formattedPreferences(contextSnapshot?.preferences ?? [])
 
         return """
         你是 AIGTD，一个长期在线的个人事务管理助手。你现在在 iPhone App 里和用户直接对话。
@@ -486,17 +511,29 @@ struct AgentRuntimeService {
 
         当前提醒事项列表：\(availableLists.isEmpty ? "无" : availableLists)
         当前未完成事项数：\(openItemCount)
-        今天到期事项数：\(todayItems.count)
-        最近事项预览：
+        今天到期事项数：\(todayItemCount)
+        当前任务上下文（ID 是本地执行目标，必须原样返回到 target_id）：
         \(recentPreview.isEmpty ? "- 暂无" : recentPreview)
         当前本地时间：\(displayTimestamp)
         当前 ISO 时间：\(currentTimestamp)
         当前时区：\(currentTimeZone.identifier)
         最近对话窗口：
         \(conversationBlock)
+        会话摘要：
+        \(summaryBlock)
+        稳定任务引用：
+        \(referenceBlock)
+
+        用户配置的角色与表达偏好：
+        \(promptBlock.isEmpty ? "使用 AIGTD 默认角色与简洁表达。" : promptBlock)
+
+        当前产品能力与边界：
+        \(soluBlock.isEmpty ? "仅使用当前 App 已提供的单动作提醒事项能力。" : soluBlock)
 
         用户记忆：
         \(memoryBlock.isEmpty ? "暂无额外记忆" : memoryBlock)
+        用户明确保存的结构化偏好：
+        \(preferenceBlock)
 
         协作原则：
         \(operatingGuideBlock.isEmpty ? "- 直接接住用户的话，默认按事务管理语境理解。" : operatingGuideBlock)
@@ -516,6 +553,10 @@ struct AgentRuntimeService {
               "due_date": "ISO8601 时间字符串，没有就留空字符串",
               "preferred_list_name": "期望清单名，没有就留空字符串",
               "target": "要操作的任务标题，没有就留空字符串",
+              "target_id": "上下文中明确目标的稳定 Reminder ID，没有就留空字符串",
+              "ordinal": "用户引用最近展示结果的序号，例如 2，没有就留空字符串",
+              "reference_source": "引用来源，例如 recently_created / recently_shown，没有就留空字符串",
+              "destination_list": "移动任务的目标清单，没有就留空字符串",
               "scope": "重排范围，例如 current_open_items / overdue_open_items / list:收集箱",
               "strategy": "重排策略，例如 spread_within_window",
               "ordering": "排序方式，例如 sequential",
@@ -532,7 +573,9 @@ struct AgentRuntimeService {
         - summarize_lists / capture_message / fallback 也必须返回上述 JSON
         - 如果用户是在查看任务，就不要伪装成 create_reminder
         - 如果用户只是打招呼、试探、闲聊，intent 应为 capture_message 或 fallback
-        - 如果用户说“删除刚才那条 / 删除上一条 / 删掉你刚建的那个”，要结合最近对话窗口，尽量把 target 填成明确任务标题
+        - 如果上下文提供稳定 Reminder ID，update / move / complete / delete 应优先把它写入 target_id
+        - 如果用户说“第一条 / 第二条”，必须在最近展示集合中解析 ordinal，不能猜标题
+        - 如果用户说“删除刚才那条 / 删除上一条 / 删掉你刚建的那个”，要结合上下文引用填写 target_id；引用失效或不唯一时必须澄清
         - 如果用户只修改一条明确任务或最近上下文任务的时间，例如“改到后天上午 10 点 / 把刚才那条改到周五”，必须输出 update_reminder
         - 只有用户要同时安排多条任务、某个清单、所有未完成事项，或明确要求先给出一份重排方案时，才输出 plan_reschedule
         - “改到”后面是清单名称时输出 move_reminder；后面是日期或时间时输出 update_reminder
@@ -542,12 +585,12 @@ struct AgentRuntimeService {
         - 不要把相对日期解析到过去
         - 对 create_reminder，entities 至少包含 title、due_date、preferred_list_name、note、source_text
         - create_reminder 的 title 只能包含实际任务名称；例如“标题是‘重复测试’，时间是明天下午 3 点”的 title 必须是“重复测试”，不得包含“标题是”“时间是”等字段提示词
-        - 对 update_reminder，entities 至少包含 target、due_date、source_text；结合最近对话把“它 / 刚才那条”解析为明确任务标题
+        - 对 update_reminder，entities 至少包含 target、target_id、ordinal、due_date、source_text
         - 对 create_list，entities 至少包含 list_name
         - 对 plan_reschedule，entities 至少包含 scope、strategy、ordering、window_days、start_date、source_text
-        - 对 move_reminder，entities 至少包含 target、destination_list
-        - 对 complete_reminder，entities 至少包含 target
-        - 对 delete_reminder，entities 至少包含 target、due_date、source_text；用户指定日期或时刻时必须写入 due_date，target 只保留任务标题
+        - 对 move_reminder，entities 至少包含 target、target_id、ordinal、destination_list
+        - 对 complete_reminder，entities 至少包含 target、target_id、ordinal
+        - 对 delete_reminder，entities 至少包含 target、target_id、ordinal、due_date、source_text；用户指定日期或时刻时必须写入 due_date，target 只保留任务标题
         - 只输出 JSON，不要输出 markdown，不要输出 ```json
         """
     }
@@ -565,6 +608,41 @@ struct AgentRuntimeService {
             return "- \(roleLabel)：\(preview)"
         }
         .joined(separator: "\n")
+    }
+
+    private func formattedSessionSummary(_ summary: SessionSummary?) -> String {
+        guard let summary else { return "- 暂无会话摘要" }
+        let lines = [
+            summary.currentGoal.map { "- 当前目标：\($0)" },
+            summary.taskScope.map { "- 当前范围：\($0)" },
+            summary.confirmedConstraints.isEmpty ? nil : "- 已确认约束：\(summary.confirmedConstraints.joined(separator: "；"))",
+            summary.pendingQuestions.isEmpty ? nil : "- 待澄清：\(summary.pendingQuestions.joined(separator: "；"))"
+        ].compactMap { $0 }
+        return lines.isEmpty ? "- 暂无有效摘要" : lines.joined(separator: "\n")
+    }
+
+    private func formattedReferences(_ references: ReferenceContext?) -> String {
+        guard let references else { return "- 暂无稳定引用" }
+        var lines: [String] = []
+        func append(_ name: String, _ reference: ReminderReference?) {
+            guard let reference, reference.isStale == false else { return }
+            lines.append("- \(name)：\(reference.reminderID)")
+        }
+        append("最近创建", references.recentlyCreated)
+        append("最近修改", references.recentlyModified)
+        append("最近移动", references.recentlyMoved)
+        append("最近完成", references.recentlyCompleted)
+        append("明确选择", references.explicitlySelected)
+        let shown = references.recentlyShown.filter { !$0.isStale }.map(\.reminderID)
+        if shown.isEmpty == false {
+            lines.append("- 最近展示（按顺序）：\(shown.enumerated().map { "\($0.offset + 1)=\($0.element)" }.joined(separator: "，"))")
+        }
+        return lines.isEmpty ? "- 暂无有效稳定引用" : lines.joined(separator: "\n")
+    }
+
+    private func formattedPreferences(_ preferences: [UserMemoryItem]) -> String {
+        guard preferences.isEmpty == false else { return "- 暂无明确保存的偏好" }
+        return preferences.map { "- \($0.category.rawValue)：\($0.value)" }.joined(separator: "\n")
     }
 
     private func makeHealthCheckRequest(

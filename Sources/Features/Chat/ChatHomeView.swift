@@ -333,6 +333,9 @@ struct ChatHomeView: View {
 
     private func sendPrompt(_ content: String) async {
         let minimumPendingDisplayDuration = Duration.milliseconds(650)
+        if shouldRefreshContext(for: content) {
+            await appModel.refreshReminderLists()
+        }
         let conversationHistory = recentConversationHistory
         let session: ChatSession
         if let existing = activeSession {
@@ -360,8 +363,51 @@ struct ChatHomeView: View {
         modelContext.insert(assistantMessage)
         try? modelContext.save()
 
+        let memoryDecision = AgentMemoryPolicy().evaluate(
+            message: content,
+            sourceMessageID: userMessage.id
+        )
+        let savedMemoryDescription: String?
+        let pendingMemoryConfirmationDescription: String?
+        if case let .candidate(candidate) = memoryDecision {
+            if isExplicitMemorySaveCommand(content) {
+                AgentUserMemoryStore.shared.upsert(
+                    category: candidate.category,
+                    value: candidate.value,
+                    sourceMessageID: nil
+                )
+                savedMemoryDescription = candidate.readableDescription
+                pendingMemoryConfirmationDescription = nil
+            } else {
+                savedMemoryDescription = nil
+                pendingMemoryConfirmationDescription = candidate.readableDescription
+            }
+        } else {
+            savedMemoryDescription = nil
+            pendingMemoryConfirmationDescription = nil
+        }
+
         let runtimeContext = AIGTDAgentDocumentStore.runtimeContext(from: agentDocuments)
         let traceID = UUID()
+        let contextSnapshot = makeContextSnapshot(
+            session: session,
+            conversationHistory: conversationHistory,
+            documents: runtimeContext
+        )
+        AgentTraceService.shared.record(
+            traceID: traceID,
+            stage: .contextBuild,
+            status: .success,
+            summaryText: "context snapshot",
+            structure: [
+                "schema:\(contextSnapshot.schemaVersion)",
+                "turns:\(contextSnapshot.recentTurns.count)",
+                "reminders:\(contextSnapshot.reminders.count)",
+                "references:\(contextSnapshot.references.allReferences.count)",
+                "preferences:\(contextSnapshot.preferences.count)",
+                "stale:\(contextSnapshot.privacy.reminderSnapshotIsStale)"
+            ]
+        )
         var createdLogID: UUID?
 
         let result = await agentRuntime.respond(
@@ -371,6 +417,7 @@ struct ChatHomeView: View {
             configuration: activeModelConfiguration,
             agentContext: runtimeContext,
             conversationHistory: conversationHistory,
+            contextSnapshot: contextSnapshot,
             traceID: traceID,
             onTextUpdate: { partialText in
                 if partialText.isEmpty == false {
@@ -399,13 +446,18 @@ struct ChatHomeView: View {
             MockAgentIntent.completeReminder.rawValue,
             MockAgentIntent.deleteReminder.rawValue
         ].contains(executionResult.actionType ?? "")
+        let awaitsConfirmation = startsPending && actionRequiresConfirmation(executionResult)
         updateRuntimeNotice(
             remoteResult: normalizedRemoteResult,
             executionResult: executionResult
         )
         assistantMessage.text = startsPending
-            ? pendingAssistantReply(for: executionResult)
-            : displayResult.reply
+            ? (awaitsConfirmation ? confirmationAssistantReply(for: executionResult) : pendingAssistantReply(for: executionResult))
+            : savedMemoryDescription.map { "我记住了：\($0)。" }
+                ?? pendingMemoryConfirmationDescription.map {
+                    "我理解这是长期偏好：\($0)。为了避免误记，请用“记住：你的规则”再确认一次。"
+                }
+                ?? displayResult.reply
         assistantMessage.actionResultSummary = executionResult.actionType == nil ? "" : executionResult.summary
         assistantMessage.status = "sent"
         isStreamingReply = false
@@ -421,7 +473,7 @@ struct ChatHomeView: View {
                 messageID: assistantMessage.id,
                 actionType: actionType,
                 payloadJSON: executionResult.payloadJSON,
-                executionStatus: startsPending ? "pending" : "success",
+                executionStatus: awaitsConfirmation ? "awaiting_confirmation" : (startsPending ? "pending" : "success"),
                 errorMessage: "",
                 executedAt: startsPending ? nil : .now,
                 undoToken: ""
@@ -435,7 +487,7 @@ struct ChatHomeView: View {
 
         try? modelContext.save()
 
-        if startsPending {
+        if startsPending && !awaitsConfirmation {
             AgentTraceService.shared.record(
                 traceID: traceID,
                 stage: .actionExecutionStarted,
@@ -446,7 +498,7 @@ struct ChatHomeView: View {
             try? await Task.sleep(for: minimumPendingDisplayDuration)
         }
 
-        if let createdLogID, startsPending {
+        if let createdLogID, startsPending && !awaitsConfirmation {
             await Task.yield()
             if let outcome = await executeResultAction(logID: createdLogID, result: executionResult) {
                 assistantMessage.text = outcome.reply
@@ -478,6 +530,31 @@ struct ChatHomeView: View {
             }
         }
 
+        if let createdLogID,
+           let completedLog = actionLogs.first(where: { $0.id == createdLogID }),
+           completedLog.executionStatus == "success",
+           recordReferenceOutcome(
+               for: completedLog,
+               shownReminderIDs: contextSnapshot.reminders.map(\.id)
+           ) {
+            AgentTraceService.shared.record(
+                traceID: traceID,
+                stage: .referenceResolution,
+                status: .success,
+                actionType: completedLog.actionType,
+                structure: ["stable_reminder_id_recorded"]
+            )
+        }
+
+        if updateSessionSummary(for: session.id) {
+            AgentTraceService.shared.record(
+                traceID: traceID,
+                stage: .sessionSummaryUpdate,
+                status: .success,
+                structure: ["deterministic_local_summary"]
+            )
+        }
+
 
         AgentTraceService.shared.record(
             traceID: traceID,
@@ -485,6 +562,14 @@ struct ChatHomeView: View {
             status: .success,
             actionType: executionResult.actionType
         )
+        if savedMemoryDescription != nil {
+            AgentTraceService.shared.record(
+                traceID: traceID,
+                stage: .memoryUpdate,
+                status: .success,
+                structure: ["explicit_long_term_preference"]
+            )
+        }
     }
 
     private func sendWithoutPrompt(_ content: String, clearDraft: Bool) async {
@@ -498,6 +583,78 @@ struct ChatHomeView: View {
             isSending = false
         }
         await sendPrompt(content)
+    }
+
+    private func shouldRefreshContext(for content: String) -> Bool {
+        if let lastSync = appModel.lastReminderSyncAt,
+           Date().timeIntervalSince(lastSync) <= 5 {
+            let taskSignals = ["今天", "明天", "后天", "清单", "任务", "提醒", "刚才", "上一条", "第一条", "第二条", "未完成"]
+            return taskSignals.contains { content.contains($0) }
+        }
+        return true
+    }
+
+    private func makeContextSnapshot(
+        session: ChatSession,
+        conversationHistory: [AgentConversationTurn],
+        documents: AgentDocumentContext
+    ) -> AgentContextSnapshot {
+        let stored = AgentSessionContextStore.shared.context(for: session.id)
+        let listIDs = Dictionary(uniqueKeysWithValues: appModel.reminderLists.map { ($0.title, $0.id) })
+        let now = Date()
+        let calendar = Calendar.current
+        let contextItems = appModel.reminderItems.map { item in
+            var relevance: [ReminderContextRelevance] = []
+            if let dueDate = item.dueDate {
+                if calendar.isDateInToday(dueDate) {
+                    relevance.append(.today)
+                } else if dueDate < now, item.isCompleted == false {
+                    relevance.append(.overdue)
+                }
+            }
+            if item.isCompleted == false {
+                relevance.append(.openItem)
+            }
+            return ReminderContextItem(
+                id: item.id,
+                title: item.title,
+                listID: listIDs[item.listTitle],
+                listTitle: item.listTitle,
+                dueDate: item.dueDate,
+                isCompleted: item.isCompleted,
+                lastModifiedAt: nil,
+                relevanceReasons: relevance,
+                notesPreview: item.notes
+            )
+        }
+        let documentInput = AgentContextDocumentsInput(
+            prompt: documents.prompt,
+            memory: documents.memory,
+            solu: documents.solu,
+            operatingGuide: documents.operatingGuide,
+            fallback: documents
+        )
+        let snapshotIsStale = appModel.lastReminderSyncAt.map { now.timeIntervalSince($0) > 5 } ?? true
+        return AgentContextBuilder().build(
+            from: AgentContextBuildInput(
+                generatedAt: now,
+                timeZoneIdentifier: TimeZone.current.identifier,
+                session: SessionContext(
+                    id: session.id,
+                    title: session.title,
+                    createdAt: session.createdAt,
+                    updatedAt: session.updatedAt
+                ),
+                recentTurns: conversationHistory,
+                sessionSummary: stored?.summary,
+                reminders: contextItems,
+                references: stored?.references ?? .empty,
+                preferences: AgentUserMemoryStore.shared.items(),
+                documents: documentInput,
+                privacy: AgentContextPrivacyStore.shared.settings(),
+                reminderSnapshotIsStale: snapshotIsStale
+            )
+        )
     }
 
     private func handleVoiceKeyboardTakeover() {
@@ -889,7 +1046,7 @@ struct ChatHomeView: View {
         }
     }
 
-    private struct ReminderReference {
+    private struct ResolvedReminderTarget {
         let targetText: String
         let identifier: String?
     }
@@ -1102,18 +1259,18 @@ struct ChatHomeView: View {
 
         if result.actionType == MockAgentIntent.updateReminder.rawValue {
             guard let envelope = decodePayload(from: result.payloadJSON),
-                  let rawTarget = actionEntityValue(
-                    in: envelope.action.entities,
-                    keys: ["target", "title", "task_title", "task", "object"]
-                  ),
                   let dueDateValue = actionEntityValue(
                     in: envelope.action.entities,
                     keys: ["due_date", "target_date", "datetime"]
                   ),
                   let dueDate = parseISODate(dueDateValue),
                   let resolvedReference = resolveUpdateReminderReference(
-                    rawTarget: rawTarget,
+                    rawTarget: actionEntityValue(
+                        in: envelope.action.entities,
+                        keys: ["target", "title", "task_title", "task", "object"]
+                    ) ?? "",
                     sourceText: envelope.action.entities["source_text"] ?? "",
+                    entities: envelope.action.entities,
                     sessionID: log.sessionID
                   ) else {
                 log.executionStatus = "failed"
@@ -1128,13 +1285,14 @@ struct ChatHomeView: View {
 
             let target = resolvedReference.targetText
             do {
+                let updatedIdentifier: String
                 if let identifier = resolvedReference.identifier {
-                    try ReminderStoreService().updateReminderDueDate(
+                    updatedIdentifier = try ReminderStoreService().updateReminderDueDate(
                         identifier: identifier,
                         dueDate: dueDate
                     )
                 } else {
-                    try await ReminderStoreService().updateReminderDueDate(
+                    updatedIdentifier = try await ReminderStoreService().updateReminderDueDate(
                         targetText: target,
                         dueDate: dueDate
                     )
@@ -1160,6 +1318,7 @@ struct ChatHomeView: View {
                 }
                 log.executionStatus = "success"
                 log.errorMessage = ""
+                log.undoToken = updatedIdentifier
                 log.executedAt = .now
                 try? modelContext.save()
                 return ActionExecutionOutcome(
@@ -1180,16 +1339,16 @@ struct ChatHomeView: View {
 
         if result.actionType == MockAgentIntent.moveReminder.rawValue {
             guard let envelope = decodePayload(from: result.payloadJSON),
-                  let rawTarget = actionEntityValue(
-                    in: envelope.action.entities,
-                    keys: ["target", "title", "task_title", "task", "object"]
-                  ),
                   let destination = actionEntityValue(
                     in: envelope.action.entities,
                     keys: ["destination_list", "preferred_list_name", "list_name", "destination"]
                   ),
                   let resolvedReference = resolveReminderReference(
-                    rawTarget,
+                    entities: envelope.action.entities,
+                    rawTarget: actionEntityValue(
+                        in: envelope.action.entities,
+                        keys: ["target", "title", "task_title", "task", "object"]
+                    ) ?? "",
                     sessionID: log.sessionID
                   ) else {
                 log.executionStatus = "failed"
@@ -1204,13 +1363,17 @@ struct ChatHomeView: View {
 
             let target = resolvedReference.targetText
             do {
-                _ = try await ReminderStoreService().moveReminder(
-                    targetText: target,
+                guard let identifier = resolvedReference.identifier else {
+                    throw ReminderStoreError.reminderNotFound(target)
+                }
+                let movedIdentifier = try ReminderStoreService().moveReminder(
+                    identifier: identifier,
                     destinationListName: destination
                 )
                 await appModel.refreshReminderLists()
                 log.executionStatus = "success"
                 log.errorMessage = ""
+                log.undoToken = movedIdentifier
                 log.executedAt = .now
                 try? modelContext.save()
                 return ActionExecutionOutcome(
@@ -1231,12 +1394,12 @@ struct ChatHomeView: View {
 
         if result.actionType == MockAgentIntent.completeReminder.rawValue {
             guard let envelope = decodePayload(from: result.payloadJSON),
-                  let rawTarget = actionEntityValue(
-                    in: envelope.action.entities,
-                    keys: ["target", "title", "task_title", "task", "object"]
-                  ),
                   let resolvedReference = resolveReminderReference(
-                    rawTarget,
+                    entities: envelope.action.entities,
+                    rawTarget: actionEntityValue(
+                        in: envelope.action.entities,
+                        keys: ["target", "title", "task_title", "task", "object"]
+                    ) ?? "",
                     sessionID: log.sessionID
                   ) else {
                 log.executionStatus = "failed"
@@ -1251,10 +1414,17 @@ struct ChatHomeView: View {
 
             let target = resolvedReference.targetText
             do {
-                _ = try await ReminderStoreService().completeReminder(targetText: target)
+                guard let identifier = resolvedReference.identifier else {
+                    throw ReminderStoreError.reminderNotFound(target)
+                }
+                let completedIdentifier = try ReminderStoreService().updateReminderCompletion(
+                    identifier: identifier,
+                    isCompleted: true
+                )
                 await appModel.refreshReminderLists()
                 log.executionStatus = "success"
                 log.errorMessage = ""
+                log.undoToken = completedIdentifier
                 log.executedAt = .now
                 try? modelContext.save()
                 return ActionExecutionOutcome(
@@ -1275,12 +1445,12 @@ struct ChatHomeView: View {
 
         if result.actionType == MockAgentIntent.deleteReminder.rawValue {
             guard let envelope = decodePayload(from: result.payloadJSON),
-                  let rawTarget = actionEntityValue(
-                    in: envelope.action.entities,
-                    keys: ["target", "title", "task_title", "task", "object"]
-                  ),
                   let resolvedReference = resolveReminderReference(
-                    rawTarget,
+                    entities: envelope.action.entities,
+                    rawTarget: actionEntityValue(
+                        in: envelope.action.entities,
+                        keys: ["target", "title", "task_title", "task", "object"]
+                    ) ?? "",
                     sessionID: log.sessionID
                   ) else {
                 log.executionStatus = "failed"
@@ -1389,25 +1559,48 @@ struct ChatHomeView: View {
     }
 
     private func resolveReminderReference(
-        _ rawTarget: String,
+        entities: [String: String],
+        rawTarget: String,
         sessionID: UUID
-    ) -> ReminderReference? {
+    ) -> ResolvedReminderTarget? {
         let trimmed = rawTarget.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.isEmpty == false else { return nil }
+        let targetID = entities["target_id"]?.nonEmpty
+        let ordinal = entities["ordinal"].flatMap(Int.init)
+        let referenceSource = entities["reference_source"]
+            .flatMap(AgentReferenceSource.init(rawValue:))
+        let storedReferences = AgentSessionContextStore.shared.context(for: sessionID)?.references ?? .empty
+        let request = AgentReferenceResolutionRequest(
+            targetID: targetID,
+            target: trimmed.nonEmpty,
+            ordinal: ordinal,
+            referenceSource: referenceSource,
+            dueDate: parseISODate(entities["due_date"]),
+            listID: entities["list_id"]?.nonEmpty,
+            listTitle: entities["list_title"]?.nonEmpty
+        )
+        let resolution = AgentReferenceResolver().resolve(
+            request,
+            references: storedReferences,
+            reminders: currentReminderContextItems()
+        )
+        if case let .resolved(item) = resolution {
+            return ResolvedReminderTarget(targetText: item.title, identifier: item.id)
+        }
 
-        if isRelativeReminderReference(trimmed),
+        // Upgrade bridge: v0.3 stored only the most recently created ID in ActionLog.
+        if targetID == nil, ordinal == nil, isRelativeReminderReference(trimmed),
            let recent = latestCreatedReminderReference(in: sessionID) {
             return recent
         }
-
-        return ReminderReference(targetText: trimmed, identifier: nil)
+        return nil
     }
 
     private func resolveUpdateReminderReference(
         rawTarget: String,
         sourceText: String,
+        entities: [String: String],
         sessionID: UUID
-    ) -> ReminderReference? {
+    ) -> ResolvedReminderTarget? {
         let normalizedSource = sourceText.trimmingCharacters(in: .whitespacesAndNewlines)
         let relativeOnlyPrefixes = [
             "改到", "再改到", "调整到", "再调整到", "延后到", "推迟到", "延期到"
@@ -1418,11 +1611,22 @@ struct ChatHomeView: View {
         let targetsRecentReminder = relativeOnlyPrefixes.contains { normalizedSource.hasPrefix($0) } ||
             relativeSignals.contains { normalizedSource.contains($0) }
 
-        if targetsRecentReminder,
+        if entities["target_id"]?.nonEmpty == nil,
+           entities["ordinal"]?.nonEmpty == nil,
+           targetsRecentReminder,
            let recent = latestCreatedReminderReference(in: sessionID) {
             return recent
         }
-        return resolveReminderReference(rawTarget, sessionID: sessionID)
+        var targetEntities = entities
+        // For an update action, due_date is the destination time, not a constraint on the current item.
+        targetEntities["due_date"] = nil
+        targetEntities["target_date"] = nil
+        targetEntities["datetime"] = nil
+        return resolveReminderReference(
+            entities: targetEntities,
+            rawTarget: rawTarget,
+            sessionID: sessionID
+        )
     }
 
     private func isRelativeReminderReference(_ value: String) -> Bool {
@@ -1433,7 +1637,7 @@ struct ChatHomeView: View {
         return hints.contains { value.contains($0) }
     }
 
-    private func latestCreatedReminderReference(in sessionID: UUID) -> ReminderReference? {
+    private func latestCreatedReminderReference(in sessionID: UUID) -> ResolvedReminderTarget? {
         let latestLog = actionLogs
             .filter {
                 $0.sessionID == sessionID &&
@@ -1449,10 +1653,145 @@ struct ChatHomeView: View {
             return nil
         }
 
-        return ReminderReference(
+        return ResolvedReminderTarget(
             targetText: title,
             identifier: latestLog.undoToken.nonEmpty
         )
+    }
+
+    private func currentReminderContextItems() -> [ReminderContextItem] {
+        let listIDs = Dictionary(uniqueKeysWithValues: appModel.reminderLists.map { ($0.title, $0.id) })
+        return appModel.reminderItems.map { item in
+            ReminderContextItem(
+                id: item.id,
+                title: item.title,
+                listID: listIDs[item.listTitle],
+                listTitle: item.listTitle,
+                dueDate: item.dueDate,
+                isCompleted: item.isCompleted,
+                lastModifiedAt: nil,
+                relevanceReasons: item.isCompleted ? [] : [.openItem],
+                notesPreview: nil
+            )
+        }
+    }
+
+    @discardableResult
+    private func recordReferenceOutcome(
+        for log: ActionLog,
+        shownReminderIDs: [String] = []
+    ) -> Bool {
+        let existing = AgentSessionContextStore.shared.context(for: log.sessionID)?.references ?? .empty
+        let sourceMessageID = log.messageID
+        let event: AgentReferenceEvent
+
+        switch log.actionType {
+        case MockAgentIntent.createReminder.rawValue:
+            guard let identifier = log.undoToken.nonEmpty else { return false }
+            event = .created(reminderID: identifier, sourceMessageID: sourceMessageID)
+        case MockAgentIntent.updateReminder.rawValue:
+            guard let identifier = log.undoToken.nonEmpty else { return false }
+            event = .modified(reminderID: identifier, sourceMessageID: sourceMessageID)
+        case MockAgentIntent.moveReminder.rawValue:
+            guard let identifier = log.undoToken.nonEmpty else { return false }
+            event = .moved(reminderID: identifier, sourceMessageID: sourceMessageID)
+        case MockAgentIntent.completeReminder.rawValue:
+            guard let identifier = log.undoToken.nonEmpty else { return false }
+            event = .completed(reminderID: identifier, sourceMessageID: sourceMessageID)
+        case MockAgentIntent.deleteReminder.rawValue:
+            guard let identifier = log.undoToken.nonEmpty else { return false }
+            event = .deleted(reminderID: identifier)
+        case MockAgentIntent.summarizeLists.rawValue:
+            let identifiers = shownReminderIDs
+            guard identifiers.isEmpty == false else { return false }
+            event = .shown(reminderIDs: identifiers, sourceMessageID: sourceMessageID)
+        default:
+            return false
+        }
+
+        let references = AgentReferenceRecorder().recording(event, in: existing)
+        AgentSessionContextStore.shared.update(sessionID: log.sessionID, references: references)
+        return true
+    }
+
+    @discardableResult
+    private func updateSessionSummary(for sessionID: UUID) -> Bool {
+        let sessionMessages = messages
+            .filter { $0.sessionID == sessionID && $0.status != "streaming" }
+            .sorted { $0.createdAt < $1.createdAt }
+        let summaryMessages = sessionMessages.map { message in
+            let role: AgentSummaryMessageRole = switch message.role {
+            case "user": .user
+            case "assistant": .assistant
+            default: .system
+            }
+            let userText = role == .user ? message.text : ""
+            return AgentSummaryMessage(
+                id: message.id,
+                role: role,
+                currentGoal: inferredSummaryGoal(from: userText),
+                taskScope: inferredTaskScope(from: userText),
+                confirmedConstraints: inferredConstraints(from: userText),
+                pendingQuestions: []
+            )
+        }
+        let summaryByMessageID = Dictionary(uniqueKeysWithValues: sessionMessages.map { ($0.id, $0.actionResultSummary) })
+        let facts = actionLogs
+            .filter { $0.sessionID == sessionID && $0.executionStatus == "success" }
+            .compactMap { log -> AgentActionSummaryFact? in
+                guard let kind = successfulActionKind(for: log.actionType) else { return nil }
+                return AgentActionSummaryFact(
+                    messageID: log.messageID,
+                    kind: kind,
+                    succeeded: true,
+                    readableFact: log.messageID.flatMap { summaryByMessageID[$0]?.nonEmpty },
+                    reminderIDs: log.undoToken.nonEmpty.map { [$0] } ?? []
+                )
+            }
+        let store = AgentSessionContextStore.shared
+        let existing = store.context(for: sessionID)
+        let service = AgentSessionSummaryService()
+        guard service.shouldUpdate(existing: existing?.summary, messages: summaryMessages, actionFacts: facts),
+              let summary = service.update(
+                existing: existing?.summary,
+                messages: summaryMessages,
+                actionFacts: facts
+              ) else {
+            return false
+        }
+        store.update(sessionID: sessionID, summary: summary, references: existing?.references ?? .empty)
+        return true
+    }
+
+    private func successfulActionKind(for actionType: String) -> AgentSuccessfulActionKind? {
+        switch actionType {
+        case MockAgentIntent.createReminder.rawValue: .create
+        case MockAgentIntent.updateReminder.rawValue: .modify
+        case MockAgentIntent.moveReminder.rawValue: .move
+        case MockAgentIntent.completeReminder.rawValue: .complete
+        case MockAgentIntent.deleteReminder.rawValue: .delete
+        case MockAgentIntent.summarizeLists.rawValue: .show
+        default: nil
+        }
+    }
+
+    private func inferredSummaryGoal(from text: String) -> String? {
+        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard cleaned.isEmpty == false else { return nil }
+        let signals = ["整理", "重排", "规划", "安排", "查看", "处理", "清理"]
+        guard signals.contains(where: cleaned.contains) else { return nil }
+        return String(cleaned.prefix(240))
+    }
+
+    private func inferredTaskScope(from text: String) -> String? {
+        let scopes = ["收集箱", "项目", "下一步行动", "等待中", "也许以后", "未完成事项", "今天", "明天"]
+        return scopes.first { text.contains($0) }
+    }
+
+    private func inferredConstraints(from text: String) -> [String] {
+        let signals = ["不要", "只处理", "以内", "之前", "之后", "必须"]
+        guard signals.contains(where: text.contains) else { return [] }
+        return [String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(240))]
     }
 
     private func hydratedReschedulePlan(from entities: [String: String]) -> ReschedulePlan? {
@@ -1731,7 +2070,9 @@ struct ChatHomeView: View {
              MockAgentIntent.updateReminder.rawValue:
             appModel.selectedTab = .reminders
         case MockAgentIntent.deleteReminder.rawValue:
-            if log.executionStatus == "needs_clarification" {
+            if log.executionStatus == "awaiting_confirmation" {
+                Task { await confirmPendingAction(log) }
+            } else if log.executionStatus == "needs_clarification" {
                 isComposerFocused = true
                 composerFocusRequestID = UUID()
                 composerFocusBridge.focus()
@@ -1763,6 +2104,36 @@ struct ChatHomeView: View {
                 composerFocusBridge.focus()
             }
         }
+    }
+
+    @MainActor
+    private func confirmPendingAction(_ log: ActionLog) async {
+        guard log.executionStatus == "awaiting_confirmation",
+              executingActionIDs.insert(log.id).inserted else { return }
+        defer { executingActionIDs.remove(log.id) }
+
+        log.executionStatus = "pending"
+        log.errorMessage = ""
+        try? modelContext.save()
+        let result = MockAgentResult(
+            reply: "",
+            summary: "",
+            actionType: log.actionType,
+            payloadJSON: log.payloadJSON,
+            confidence: 1,
+            followUpPrompt: nil
+        )
+        if let outcome = await executeResultAction(logID: log.id, result: result),
+           let messageID = log.messageID,
+           let assistantMessage = messages.first(where: { $0.id == messageID }) {
+            assistantMessage.text = outcome.reply
+            assistantMessage.actionResultSummary = outcome.summary
+        }
+        if log.executionStatus == "success" {
+            _ = recordReferenceOutcome(for: log)
+            _ = updateSessionSummary(for: log.sessionID)
+        }
+        try? modelContext.save()
     }
 
     @MainActor
@@ -1907,6 +2278,36 @@ struct ChatHomeView: View {
             return "我先核对一下你要删除的是哪条任务。"
         default:
             return result.reply
+        }
+    }
+
+    private func confirmationAssistantReply(for result: MockAgentResult) -> String {
+        switch result.actionType {
+        case MockAgentIntent.deleteReminder.rawValue:
+            return "我已经找到要删除的任务。按你的规则，需要你在卡片上确认后我才会删除。"
+        default:
+            return "这个操作需要你确认。确认后我再执行。"
+        }
+    }
+
+    private func actionRequiresConfirmation(_ result: MockAgentResult) -> Bool {
+        guard result.actionType == MockAgentIntent.deleteReminder.rawValue else { return false }
+        if decodePayload(from: result.payloadJSON)?.action.requiresConfirmation == true {
+            return true
+        }
+        return AgentUserMemoryStore.shared.items().contains { item in
+            guard item.category == .transactionRule else { return false }
+            let rule = item.value.lowercased()
+            let mentionsDeletion = rule.contains("删除") || rule.contains("删") || rule.contains("delete")
+            let requiresConfirmation = rule.contains("确认") || rule.contains("confirm")
+            return mentionsDeletion && requiresConfirmation
+        }
+    }
+
+    private func isExplicitMemorySaveCommand(_ content: String) -> Bool {
+        let normalized = content.lowercased()
+        return ["记住", "请保存", "保存为长期偏好", "remember", "please remember"].contains {
+            normalized.contains($0)
         }
     }
 
@@ -2210,6 +2611,8 @@ private struct ActionResultCardView: View {
             switch log.executionStatus {
             case "success":
                 return "删掉了"
+            case "awaiting_confirmation":
+                return "需要确认"
             case "needs_clarification":
                 return "需要确认"
             case "failed":
@@ -2290,6 +2693,8 @@ private struct ActionResultCardView: View {
             }
         case "delete_reminder":
             switch log.executionStatus {
+            case "awaiting_confirmation":
+                return "确认后才会从提醒事项中删除"
             case "pending":
                 return "我在核对具体要删除哪一条"
             case "needs_clarification":
@@ -2507,6 +2912,8 @@ private struct ActionResultCardView: View {
             return ("部分完成", .orange, Color.orange.opacity(0.12))
         case "pending":
             return ("在处理", .orange, Color.orange.opacity(0.12))
+        case "awaiting_confirmation":
+            return ("待确认", .orange, Color.orange.opacity(0.12))
         case "failed":
             return ("没成", .red, Color.red.opacity(0.12))
         case "needs_clarification":
@@ -2521,6 +2928,9 @@ private struct ActionResultCardView: View {
         case "create_reminder", "update_reminder", "create_list", "summarize_lists":
             return "去看清单"
         case "delete_reminder":
+            if log.executionStatus == "awaiting_confirmation" {
+                return "确认删除"
+            }
             return log.executionStatus == "needs_clarification" ? "继续说明" : "去看清单"
         case "plan_reschedule":
             if reschedulePhase == "plan" {
