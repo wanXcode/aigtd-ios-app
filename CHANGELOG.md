@@ -37,7 +37,7 @@ Context and memory release candidate validated through build `0.4.0 (17)`.
 
 ### Validation
 
-- passed the previous full iPhone suite with 71 tests and 0 failures; the expanded 77-test candidate compiles and awaits an unlocked-device run
+- passed the expanded full iPhone suite with 77 tests and 0 failures
 - retained the original 100-case conversation evaluation baseline
 - added a separate 50-case context and memory evaluation fixture
 
