@@ -25,6 +25,8 @@ Context and memory release candidate validated through build `0.4.0 (17)`.
 - successful reminder actions now write their returned EventKit IDs back to session context
 - reminder refresh failures preserve the last successful snapshot instead of clearing visible tasks
 - long conversations retain deterministic goals, scopes, confirmed constraints, successful action facts, and related IDs
+- local fallback execution now consumes the same reminder snapshot, Agent documents, and structured preferences as the remote runtime
+- saved long-term preferences can be reviewed and edited from the context privacy screen
 
 ### Safety
 
@@ -34,10 +36,11 @@ Context and memory release candidate validated through build `0.4.0 (17)`.
 - saved delete-confirmation rules are enforced locally before EventKit mutation
 - task notes and completed reminders remain excluded from remote context unless the user opts in
 - ordinary chat, one-time tasks, emotions, credentials, contact details, addresses, health data, and financial data are not saved as long-term memory
+- edited long-term preferences are rejected when they contain sensitive content
 
 ### Validation
 
-- passed the expanded full iPhone suite with 77 tests and 0 failures
+- passed the expanded full iPhone suite with 80 tests and 0 failures
 - retained the original 100-case conversation evaluation baseline
 - added a separate 50-case context and memory evaluation fixture
 

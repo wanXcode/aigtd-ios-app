@@ -37,7 +37,7 @@ final class AgentDocumentContextTests: XCTestCase {
     }
 
     func testLocalFallbackUsesSnapshotReminderDataAsUnifiedInput() throws {
-        let dueDate = Calendar.current.date(byAdding: .hour, value: 1, to: .now)
+        let dueDate = Date()
         let snapshot = makeSnapshot(
             reminders: [
                 ReminderContextItem(
