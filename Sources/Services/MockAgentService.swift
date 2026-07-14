@@ -53,6 +53,65 @@ struct MockAgentResult: Sendable {
     let followUpPrompt: String?
 }
 
+enum ReminderCommandSanitizer {
+    static func title(modelTitle: String, sourceText: String) -> String {
+        if let explicitTitle = explicitTitle(in: sourceText) {
+            return explicitTitle
+        }
+
+        var value = modelTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        value = replacingRegex(
+            #"^(?:任务)?(?:标题|名称|名字)\s*(?:是|为|[:：])\s*"#,
+            in: value,
+            with: ""
+        )
+        value = replacingRegex(
+            #"\s*(?:[，,]\s*)?(?:时间|日期|截止时间)\s*(?:是|为|[:：])?\s*$"#,
+            in: value,
+            with: ""
+        )
+        return trimmedTitle(value)
+    }
+
+    private static func explicitTitle(in sourceText: String) -> String? {
+        let patterns = [
+            #"(?:任务)?(?:标题|名称|名字)\s*(?:是|为|[:：])\s*[“\"‘']([^”\"’']+)[”\"’']"#,
+            #"(?:任务)?(?:标题|名称|名字)\s*(?:是|为|[:：])\s*([^，,。；;\n]+?)(?=\s*(?:[，,。；;]|时间|日期|截止时间|$))"#
+        ]
+
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern),
+                  let match = regex.firstMatch(
+                    in: sourceText,
+                    range: NSRange(sourceText.startIndex..<sourceText.endIndex, in: sourceText)
+                  ),
+                  match.numberOfRanges > 1,
+                  let range = Range(match.range(at: 1), in: sourceText) else {
+                continue
+            }
+            let value = trimmedTitle(String(sourceText[range]))
+            if value.isEmpty == false { return value }
+        }
+        return nil
+    }
+
+    private static func replacingRegex(_ pattern: String, in text: String, with replacement: String) -> String {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return text }
+        return regex.stringByReplacingMatches(
+            in: text,
+            range: NSRange(text.startIndex..<text.endIndex, in: text),
+            withTemplate: replacement
+        )
+    }
+
+    private static func trimmedTitle(_ value: String) -> String {
+        value.trimmingCharacters(
+            in: CharacterSet(charactersIn: " 　，,。；;:：\"'“”‘’")
+                .union(.whitespacesAndNewlines)
+        )
+    }
+}
+
 struct MockAgentService {
     private let mappingRuleEngine = AppleRemindersMappingRuleEngine()
     private let preferredUserAddress = "哥哥"
@@ -721,7 +780,8 @@ struct MockAgentService {
             title = String(title.dropLast(tail.count))
         }
         title = replacingRegex(#"^(一下|一个|这件事|这个事情)\s*"#, in: title, with: "")
-        return title.trimmingCharacters(in: CharacterSet(charactersIn: " ，,。；;:：").union(.whitespacesAndNewlines))
+        let cleaned = title.trimmingCharacters(in: CharacterSet(charactersIn: " ，,。；;:：").union(.whitespacesAndNewlines))
+        return ReminderCommandSanitizer.title(modelTitle: cleaned, sourceText: text)
     }
 
     private func explicitlyMentionedListName(

@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		017A2BCC7F9E1BB2D9534DC7 /* Pods_AIGTDReminders.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 79232E290CEB77A4360EC4E5 /* Pods_AIGTDReminders.framework */; };
 		14FD34D3C53AEA882CEDD015 /* agent-evaluation-cases.json in Resources */ = {isa = PBXBuildFile; fileRef = 69880025DA582D706568A54C /* agent-evaluation-cases.json */; };
 		21CF03D972636AE7F2E50D21 /* VoiceTranscriptionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E7FC6AD668F4F54377E08C3 /* VoiceTranscriptionService.swift */; };
 		230E589FD4FEE3539D2BE21C /* Secrets.local.plist.example in Resources */ = {isa = PBXBuildFile; fileRef = E0CC7F983D8C8EA3EBB59ABE /* Secrets.local.plist.example */; };
@@ -14,12 +15,12 @@
 		2E671B245F8A5BD7BA0CD412 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = ADB922E4CE7166A8ED71E0BE /* Assets.xcassets */; };
 		309549CFDC9B00AB1CEE1EF4 /* RemoteResponseDebugStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F749D29C1583F86683582DA /* RemoteResponseDebugStore.swift */; };
 		38EC65C0D26ED3EE15580C62 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C87E4ACD49E00FC289F8C284 /* RootView.swift */; };
-		3953C5CA037C9F9368A9DFD7 /* Pods_AIGTDReminders.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C3A64671D763375FFE73FE0A /* Pods_AIGTDReminders.framework */; };
 		492401C23F008035267ACCD8 /* DefaultConfigurationSeeder.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57C47BC5BA7A5574F586D6D /* DefaultConfigurationSeeder.swift */; };
 		4A8B296AAFA1B0C055BCDCF1 /* AIGTDAgentDocuments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0EC160B41D24767E78DE1E07 /* AIGTDAgentDocuments.swift */; };
 		5BAEBB9D580B4B424A8015C4 /* AppleRemindersMapping.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B0D19F4FEB5D7DFC049EAC5 /* AppleRemindersMapping.swift */; };
 		60E90CD2F2129A7D8CE3CB9B /* ModelSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C92089647182248143878AD0 /* ModelSettingsView.swift */; };
 		67C951FBA23E7788F9BAA103 /* AgentTraceService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDC2541D6F7FE85A0D45DB8E /* AgentTraceService.swift */; };
+		74EF71E0BB1086075B2CFA33 /* ReminderCommandSafetyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8CF40EEDF16D1BE5EE97A2B /* ReminderCommandSafetyTests.swift */; };
 		76DEE11C4B8B91F3CCA9E83A /* MockAgentService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2524DFE32D2C0242C8FBE4AF /* MockAgentService.swift */; };
 		771EE99D656DAC6E04CD8EAB /* SmokeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01EBD9BD4DB828A12F696953 /* SmokeTests.swift */; };
 		7B75D4B28D070264B12867F0 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = CF2CDEADC8E6FFC3DCB81ADA /* Localizable.strings */; };
@@ -62,17 +63,20 @@
 		1F749D29C1583F86683582DA /* RemoteResponseDebugStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteResponseDebugStore.swift; sourceTree = "<group>"; };
 		208A1E640A25A8A2A70B2A0F /* MainTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
 		2524DFE32D2C0242C8FBE4AF /* MockAgentService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockAgentService.swift; sourceTree = "<group>"; };
-		29341403FEBF6867B9CF7C56 /* AIGTDRemindersTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AIGTDRemindersTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		29341403FEBF6867B9CF7C56 /* AIGTDRemindersTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = AIGTDRemindersTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		2ACA588E7B979150E9D8BB50 /* Pods-AIGTDReminders.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-AIGTDReminders.release.xcconfig"; path = "Target Support Files/Pods-AIGTDReminders/Pods-AIGTDReminders.release.xcconfig"; sourceTree = "<group>"; };
 		32062695EB97059C22AD152D /* ReminderBatchExecution.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderBatchExecution.swift; sourceTree = "<group>"; };
 		39E12F7A97E06494BA29C5DB /* AgentRuntimeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentRuntimeService.swift; sourceTree = "<group>"; };
 		3B0D19F4FEB5D7DFC049EAC5 /* AppleRemindersMapping.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleRemindersMapping.swift; sourceTree = "<group>"; };
 		40A347872C5391B095D16F28 /* AgentDiagnosticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentDiagnosticsTests.swift; sourceTree = "<group>"; };
 		4336186B28915AA2CDE22C74 /* LocalSecretsLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalSecretsLoader.swift; sourceTree = "<group>"; };
 		567650749E6AF737D4B5EAD3 /* ReminderBatchExecutionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderBatchExecutionTests.swift; sourceTree = "<group>"; };
+		5B9597698F429903D69BA629 /* Pods-AIGTDReminders.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-AIGTDReminders.debug.xcconfig"; path = "Target Support Files/Pods-AIGTDReminders/Pods-AIGTDReminders.debug.xcconfig"; sourceTree = "<group>"; };
 		5BD5CC43506B2F329746582C /* PersistenceModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistenceModels.swift; sourceTree = "<group>"; };
 		69880025DA582D706568A54C /* agent-evaluation-cases.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "agent-evaluation-cases.json"; sourceTree = "<group>"; };
+		79232E290CEB77A4360EC4E5 /* Pods_AIGTDReminders.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_AIGTDReminders.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		7D792DDE49370EE7C7CAE3A3 /* ChatHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatHomeView.swift; sourceTree = "<group>"; };
-		802BD0311C392351E4A189C2 /* AIGTD Reminders.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "AIGTD Reminders.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		802BD0311C392351E4A189C2 /* AIGTDReminders.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = AIGTDReminders.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		87480D675543CCDECFB891CB /* OnboardingRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingRootView.swift; sourceTree = "<group>"; };
 		9A3ED8B29E2AE5B2F628C7A8 /* DoubaoOfficialASRSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoubaoOfficialASRSession.swift; sourceTree = "<group>"; };
 		9E7FC6AD668F4F54377E08C3 /* VoiceTranscriptionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceTranscriptionService.swift; sourceTree = "<group>"; };
@@ -81,26 +85,24 @@
 		A9FE837EE7D805A602A10436 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "zh-Hans.lproj/Localizable.strings"; sourceTree = "<group>"; };
 		ADB922E4CE7166A8ED71E0BE /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		BDC2541D6F7FE85A0D45DB8E /* AgentTraceService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentTraceService.swift; sourceTree = "<group>"; };
-		C3A64671D763375FFE73FE0A /* Pods_AIGTDReminders.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_AIGTDReminders.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		C87E4ACD49E00FC289F8C284 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		C92089647182248143878AD0 /* ModelSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelSettingsView.swift; sourceTree = "<group>"; };
-		CDEFD7BEFC0D5F42F25F9286 /* Pods-AIGTDReminders.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-AIGTDReminders.debug.xcconfig"; path = "Target Support Files/Pods-AIGTDReminders/Pods-AIGTDReminders.debug.xcconfig"; sourceTree = "<group>"; };
 		D0496C7A267F4FBF183BAE32 /* AgentEvaluationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentEvaluationTests.swift; sourceTree = "<group>"; };
 		D23494101E3F7A590C8FAB37 /* AIGTDRemindersApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIGTDRemindersApp.swift; sourceTree = "<group>"; };
 		D27D2ECD6E652D41FCEB4CA4 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
 		DD422EEC423D82DCE927DF7B /* Secrets.local.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Secrets.local.plist; sourceTree = "<group>"; };
-		E0CC7F983D8C8EA3EBB59ABE /* Secrets.local.plist.example */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = Secrets.local.plist.example; sourceTree = "<group>"; };
-		E53D05489B5DACA4754DB1D8 /* Pods-AIGTDReminders.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-AIGTDReminders.release.xcconfig"; path = "Target Support Files/Pods-AIGTDReminders/Pods-AIGTDReminders.release.xcconfig"; sourceTree = "<group>"; };
+		E0CC7F983D8C8EA3EBB59ABE /* Secrets.local.plist.example */ = {isa = PBXFileReference; path = Secrets.local.plist.example; sourceTree = "<group>"; };
 		E740D7B5BEEB15C46306EB1E /* Pods-AIGTDReminders.release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "Pods-AIGTDReminders.release.xcconfig"; sourceTree = "<group>"; };
 		EB48FD4A6260EAA256240488 /* Pods-AIGTDReminders.debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "Pods-AIGTDReminders.debug.xcconfig"; sourceTree = "<group>"; };
+		F8CF40EEDF16D1BE5EE97A2B /* ReminderCommandSafetyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderCommandSafetyTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
-		910C6859D4F31A0F0B690D83 /* Frameworks */ = {
+		74756DC9391E4FFD9846BD29 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				3953C5CA037C9F9368A9DFD7 /* Pods_AIGTDReminders.framework in Frameworks */,
+				017A2BCC7F9E1BB2D9534DC7 /* Pods_AIGTDReminders.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -150,7 +152,7 @@
 		22E507A2BE1C23BDB7861D40 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				802BD0311C392351E4A189C2 /* AIGTD Reminders.app */,
+				802BD0311C392351E4A189C2 /* AIGTDReminders.app */,
 				29341403FEBF6867B9CF7C56 /* AIGTDRemindersTests.xctest */,
 			);
 			name = Products;
@@ -212,17 +214,19 @@
 				8A92B57A077FDC83ADFDB543 /* Sources */,
 				83A4F7154E14F27108306046 /* Tests */,
 				22E507A2BE1C23BDB7861D40 /* Products */,
-				AB51E407AFDEF907A4427782 /* Pods */,
-				77C448D65ABDC8D0B23BB4DF /* Frameworks */,
+				75B8CDD25CFAF33B6451495A /* Pods */,
+				C05CDE76B2809C0A4A0C8A10 /* Frameworks */,
 			);
 			sourceTree = "<group>";
 		};
-		77C448D65ABDC8D0B23BB4DF /* Frameworks */ = {
+		75B8CDD25CFAF33B6451495A /* Pods */ = {
 			isa = PBXGroup;
 			children = (
-				C3A64671D763375FFE73FE0A /* Pods_AIGTDReminders.framework */,
+				5B9597698F429903D69BA629 /* Pods-AIGTDReminders.debug.xcconfig */,
+				2ACA588E7B979150E9D8BB50 /* Pods-AIGTDReminders.release.xcconfig */,
 			);
-			name = Frameworks;
+			name = Pods;
+			path = Pods;
 			sourceTree = "<group>";
 		};
 		7F30B8861B1145EBAA3D12CE /* Reminders */ = {
@@ -239,6 +243,7 @@
 				40A347872C5391B095D16F28 /* AgentDiagnosticsTests.swift */,
 				D0496C7A267F4FBF183BAE32 /* AgentEvaluationTests.swift */,
 				567650749E6AF737D4B5EAD3 /* ReminderBatchExecutionTests.swift */,
+				F8CF40EEDF16D1BE5EE97A2B /* ReminderCommandSafetyTests.swift */,
 				0D7907A4562986BA27718E3D /* ReschedulePlannerTests.swift */,
 				4CE0C2590104226F5C32299F /* Support */,
 			);
@@ -265,13 +270,12 @@
 			path = Sources;
 			sourceTree = "<group>";
 		};
-		AB51E407AFDEF907A4427782 /* Pods */ = {
+		C05CDE76B2809C0A4A0C8A10 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
-				CDEFD7BEFC0D5F42F25F9286 /* Pods-AIGTDReminders.debug.xcconfig */,
-				E53D05489B5DACA4754DB1D8 /* Pods-AIGTDReminders.release.xcconfig */,
+				79232E290CEB77A4360EC4E5 /* Pods_AIGTDReminders.framework */,
 			);
-			path = Pods;
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 		C44B0FB1FAAF9DA7CFB1C6F9 /* Onboarding */ = {
@@ -314,11 +318,11 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = EA78B49CD781891BE89B532D /* Build configuration list for PBXNativeTarget "AIGTDReminders" */;
 			buildPhases = (
-				0CE8BBD1BD3D3E32AA996CD7 /* [CP] Check Pods Manifest.lock */,
+				6920855F25C7D0B237CAF0F0 /* [CP] Check Pods Manifest.lock */,
 				396AE852FA412006169A130B /* Sources */,
 				D8B121BCAD51B7CC33C59D0C /* Resources */,
-				910C6859D4F31A0F0B690D83 /* Frameworks */,
-				D223736EBC03F3F4E471A805 /* [CP] Embed Pods Frameworks */,
+				74756DC9391E4FFD9846BD29 /* Frameworks */,
+				5B6BA3F1F45560F02306A0C6 /* [CP] Embed Pods Frameworks */,
 			);
 			buildRules = (
 			);
@@ -326,7 +330,7 @@
 			);
 			name = AIGTDReminders;
 			productName = AIGTDReminders;
-			productReference = 802BD0311C392351E4A189C2 /* AIGTD Reminders.app */;
+			productReference = 802BD0311C392351E4A189C2 /* AIGTDReminders.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -337,6 +341,14 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					3A28FC10CD1D44F1EF1B7863 = {
+						DevelopmentTeam = BJ43NTPPMD;
+					};
+					C7AB9BF5610361E7EDCC6C2B = {
+						DevelopmentTeam = BJ43NTPPMD;
+					};
+				};
 			};
 			buildConfigurationList = 895734504410A17C34C27305 /* Build configuration list for PBXProject "AIGTDReminders" */;
 			developmentRegion = en;
@@ -382,7 +394,24 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		0CE8BBD1BD3D3E32AA996CD7 /* [CP] Check Pods Manifest.lock */ = {
+		5B6BA3F1F45560F02306A0C6 /* [CP] Embed Pods Frameworks */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-AIGTDReminders/Pods-AIGTDReminders-frameworks-${CONFIGURATION}-input-files.xcfilelist",
+			);
+			name = "[CP] Embed Pods Frameworks";
+			outputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-AIGTDReminders/Pods-AIGTDReminders-frameworks-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-AIGTDReminders/Pods-AIGTDReminders-frameworks.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+		6920855F25C7D0B237CAF0F0 /* [CP] Check Pods Manifest.lock */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -404,27 +433,6 @@
 			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
 			showEnvVarsInLog = 0;
 		};
-		D223736EBC03F3F4E471A805 /* [CP] Embed Pods Frameworks */ = {
-			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-				"${PODS_ROOT}/Target Support Files/Pods-AIGTDReminders/Pods-AIGTDReminders-frameworks-${CONFIGURATION}-input-files.xcfilelist",
-			);
-			inputPaths = (
-			);
-			name = "[CP] Embed Pods Frameworks";
-			outputFileListPaths = (
-				"${PODS_ROOT}/Target Support Files/Pods-AIGTDReminders/Pods-AIGTDReminders-frameworks-${CONFIGURATION}-output-files.xcfilelist",
-			);
-			outputPaths = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-AIGTDReminders/Pods-AIGTDReminders-frameworks.sh\"\n";
-			showEnvVarsInLog = 0;
-		};
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -435,6 +443,7 @@
 				BFFCC36D74C3E45ABB5E9B8B /* AgentDiagnosticsTests.swift in Sources */,
 				F1676C4A38E982B660DD42BD /* AgentEvaluationTests.swift in Sources */,
 				D06EBA78038440D98FF028B7 /* ReminderBatchExecutionTests.swift in Sources */,
+				74EF71E0BB1086075B2CFA33 /* ReminderCommandSafetyTests.swift in Sources */,
 				999F5FBA9E43C46AC3275A9A /* ReschedulePlannerTests.swift in Sources */,
 				771EE99D656DAC6E04CD8EAB /* SmokeTests.swift in Sources */,
 			);
@@ -526,7 +535,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 13;
+				CURRENT_PROJECT_VERSION = 14;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
@@ -560,7 +569,7 @@
 		};
 		4C69E33D3F7BF38FAB2A4DAD /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = E53D05489B5DACA4754DB1D8 /* Pods-AIGTDReminders.release.xcconfig */;
+			baseConfigurationReference = 2ACA588E7B979150E9D8BB50 /* Pods-AIGTDReminders.release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
@@ -574,6 +583,7 @@
 				INFOPLIST_KEY_CFBundleAllowMixedLocalizations = YES;
 				INFOPLIST_KEY_CFBundleDevelopmentRegion = en;
 				INFOPLIST_KEY_CFBundleDisplayName = AIGTD;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "AIGTD needs microphone access so it can record your voice and transcribe it into tasks.";
 				INFOPLIST_KEY_NSRemindersFullAccessUsageDescription = "AIGTD needs access to your reminders so it can read, create, and update tasks for you.";
 				INFOPLIST_KEY_NSRemindersUsageDescription = "AIGTD needs access to your reminders so it can read, create, and update tasks for you.";
@@ -617,7 +627,7 @@
 		};
 		8F40C9BC2D271AC9AE533515 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = CDEFD7BEFC0D5F42F25F9286 /* Pods-AIGTDReminders.debug.xcconfig */;
+			baseConfigurationReference = 5B9597698F429903D69BA629 /* Pods-AIGTDReminders.debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
@@ -631,6 +641,7 @@
 				INFOPLIST_KEY_CFBundleAllowMixedLocalizations = YES;
 				INFOPLIST_KEY_CFBundleDevelopmentRegion = en;
 				INFOPLIST_KEY_CFBundleDisplayName = AIGTD;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "AIGTD needs microphone access so it can record your voice and transcribe it into tasks.";
 				INFOPLIST_KEY_NSRemindersFullAccessUsageDescription = "AIGTD needs access to your reminders so it can read, create, and update tasks for you.";
 				INFOPLIST_KEY_NSRemindersUsageDescription = "AIGTD needs access to your reminders so it can read, create, and update tasks for you.";
@@ -706,7 +717,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 13;
+				CURRENT_PROJECT_VERSION = 14;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;

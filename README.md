@@ -17,7 +17,7 @@ The current implementation is built around a simple principle:
 
 ## Version
 
-Current release candidate: `0.3.0 (13)`
+Current release candidate: `0.3.0 (14)`
 
 Latest release notes:
 

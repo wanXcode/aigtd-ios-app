@@ -541,6 +541,7 @@ struct AgentRuntimeService {
         - 如果用户没有给具体时刻，但给了日期，due_date 默认用当地时间 09:00:00
         - 不要把相对日期解析到过去
         - 对 create_reminder，entities 至少包含 title、due_date、preferred_list_name、note、source_text
+        - create_reminder 的 title 只能包含实际任务名称；例如“标题是‘重复测试’，时间是明天下午 3 点”的 title 必须是“重复测试”，不得包含“标题是”“时间是”等字段提示词
         - 对 update_reminder，entities 至少包含 target、due_date、source_text；结合最近对话把“它 / 刚才那条”解析为明确任务标题
         - 对 create_list，entities 至少包含 list_name
         - 对 plan_reschedule，entities 至少包含 scope、strategy、ordering、window_days、start_date、source_text

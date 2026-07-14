@@ -285,10 +285,85 @@ struct ReschedulePlanner {
     }
 }
 
-private struct ReminderLookupCandidate: Sendable {
+struct ReminderLookupCandidate: Sendable {
     let identifier: String
     let normalizedTitle: String
     let displayTitle: String
+}
+
+enum ReminderCandidateResolver {
+    static func resolveIdentifier(
+        targetText: String,
+        candidates: [ReminderLookupCandidate],
+        requireUniquePlausibleMatch: Bool
+    ) throws -> String? {
+        let trimmed = normalizeQuery(targetText)
+        let normalizedTarget = normalize(trimmed)
+        guard normalizedTarget.isEmpty == false else { return nil }
+
+        if let quotedTarget = quotedText(in: trimmed).map(normalize) {
+            return try uniqueIdentifier(
+                targetText: targetText,
+                matches: candidates.filter { $0.normalizedTitle == quotedTarget }
+            )
+        }
+
+        let exactMatches = candidates.filter { $0.normalizedTitle == normalizedTarget }
+        let plausibleMatches = candidates.filter { candidate in
+            candidate.normalizedTitle.contains(normalizedTarget) ||
+                normalizedTarget.contains(candidate.normalizedTitle)
+        }
+
+        if requireUniquePlausibleMatch, plausibleMatches.count > 1 {
+            throw ReminderStoreError.reminderAmbiguous(
+                targetText,
+                plausibleMatches.map(\.displayTitle)
+            )
+        }
+        if exactMatches.isEmpty == false {
+            return try uniqueIdentifier(targetText: targetText, matches: exactMatches)
+        }
+        return try uniqueIdentifier(targetText: targetText, matches: plausibleMatches)
+    }
+
+    private static func uniqueIdentifier(
+        targetText: String,
+        matches: [ReminderLookupCandidate]
+    ) throws -> String? {
+        if matches.count > 1 {
+            throw ReminderStoreError.reminderAmbiguous(
+                targetText,
+                matches.map(\.displayTitle)
+            )
+        }
+        return matches.first?.identifier
+    }
+
+    private static func normalizeQuery(_ text: String) -> String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "“", with: "\"")
+            .replacingOccurrences(of: "”", with: "\"")
+            .replacingOccurrences(of: "‘", with: "'")
+            .replacingOccurrences(of: "’", with: "'")
+            .replacingOccurrences(of: "　", with: " ")
+    }
+
+    private static func quotedText(in text: String) -> String? {
+        let pairs: [(String, String)] = [("“", "”"), ("\"", "\""), ("‘", "’")]
+        for pair in pairs {
+            if let range = text.range(of: pair.0),
+               let endRange = text[range.upperBound...].range(of: pair.1) {
+                let value = String(text[range.upperBound..<endRange.lowerBound])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if value.isEmpty == false { return value }
+            }
+        }
+        return nil
+    }
+
+    private static func normalize(_ text: String) -> String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
 }
 
 enum ReminderStoreError: LocalizedError {
@@ -556,7 +631,11 @@ struct ReminderStoreService {
         let store = try authorizedStore()
         store.refreshSourcesIfNecessary()
 
-        guard let reminderID = try await findReminderIdentifier(matching: targetText, store: store),
+        guard let reminderID = try await findReminderIdentifier(
+            matching: targetText,
+            store: store,
+            requireUniquePlausibleMatch: true
+        ),
               let reminder = store.calendarItem(withIdentifier: reminderID) as? EKReminder else {
             throw ReminderStoreError.reminderNotFound(targetText)
         }
@@ -586,7 +665,8 @@ struct ReminderStoreService {
 
     private func findReminderIdentifier(
         matching targetText: String,
-        store: EKEventStore
+        store: EKEventStore,
+        requireUniquePlausibleMatch: Bool = false
     ) async throws -> String? {
         let trimmed = normalizeQuery(targetText)
         guard trimmed.isEmpty == false, trimmed != "当前这条" else {
@@ -619,47 +699,11 @@ struct ReminderStoreService {
             }
         }
 
-        let normalizedTarget = normalize(trimmed)
-        let quotedTarget = quotedText(in: trimmed).map(normalize)
-
-        if let quotedTarget {
-            let exactQuoted = candidates.filter { $0.normalizedTitle == quotedTarget }
-            if exactQuoted.count == 1 {
-                return exactQuoted[0].identifier
-            }
-            if exactQuoted.count > 1 {
-                throw ReminderStoreError.reminderAmbiguous(
-                    targetText,
-                    exactQuoted.map(\.displayTitle)
-                )
-            }
-        }
-
-        let exactMatches = candidates.filter { $0.normalizedTitle == normalizedTarget }
-        if exactMatches.count == 1 {
-            return exactMatches[0].identifier
-        }
-        if exactMatches.count > 1 {
-            throw ReminderStoreError.reminderAmbiguous(
-                targetText,
-                exactMatches.map(\.displayTitle)
-            )
-        }
-
-        let containsMatches = candidates.filter { candidate in
-            candidate.normalizedTitle.contains(normalizedTarget) || normalizedTarget.contains(candidate.normalizedTitle)
-        }
-        if containsMatches.count == 1 {
-            return containsMatches[0].identifier
-        }
-        if containsMatches.count > 1 {
-            throw ReminderStoreError.reminderAmbiguous(
-                targetText,
-                containsMatches.map(\.displayTitle)
-            )
-        }
-
-        return nil
+        return try ReminderCandidateResolver.resolveIdentifier(
+            targetText: targetText,
+            candidates: candidates,
+            requireUniquePlausibleMatch: requireUniquePlausibleMatch
+        )
     }
 
     private func resolveCalendar(

@@ -6,7 +6,7 @@ Development continues after the `0.3.0` stabilization candidate. Planned work is
 
 ## 0.3.0 - Release Candidate
 
-Stabilization release candidate validated on iPhone as build `0.3.0 (13)`.
+Stabilization release candidate validated on iPhone through build `0.3.0 (13)`; TestFlight smoke findings are addressed in hotfix candidate `0.3.0 (14)`.
 
 ### Added
 
@@ -29,6 +29,10 @@ Stabilization release candidate validated on iPhone as build `0.3.0 (13)`.
 - included a recent conversation window in remote model prompts so phrases like “刚才那条 / 你刚建的那个” can resolve against chat context more reliably
 - aligned the project generation source and Xcode project on version `0.3.0 (5)`
 - advanced the post-test repair candidate to build `0.3.0 (13)`
+- normalized explicit create fields such as `标题是...，时间是...` before displaying or writing reminder titles
+- strengthened delete matching so one exact result plus other plausible candidates requires clarification
+- declared the app's non-exempt encryption usage in generated Info.plist to avoid repeated TestFlight export-compliance prompts
+- advanced the TestFlight smoke-test hotfix candidate to build `0.3.0 (14)`
 
 ### Fixed
 

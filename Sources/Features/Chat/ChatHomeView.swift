@@ -1029,13 +1029,28 @@ struct ChatHomeView: View {
 
         if result.actionType == MockAgentIntent.createReminder.rawValue {
             guard let envelope = decodePayload(from: result.payloadJSON),
-                  let title = envelope.action.entities["title"]?.nonEmpty else {
+                  let rawTitle = envelope.action.entities["title"]?.nonEmpty else {
                 log.executionStatus = "failed"
                 log.errorMessage = "无法解析要创建的任务标题。"
                 log.executedAt = .now
                 try? modelContext.save()
                 return ActionExecutionOutcome(
                     reply: "我理解的是要新建任务，但这次没能解析出任务标题。",
+                    summary: "创建任务失败"
+                )
+            }
+
+            let title = ReminderCommandSanitizer.title(
+                modelTitle: rawTitle,
+                sourceText: envelope.action.entities["source_text"] ?? ""
+            )
+            guard title.isEmpty == false else {
+                log.executionStatus = "failed"
+                log.errorMessage = "解析后的任务标题为空。"
+                log.executedAt = .now
+                try? modelContext.save()
+                return ActionExecutionOutcome(
+                    reply: "我理解的是要新建任务，但这次没能解析出有效标题。",
                     summary: "创建任务失败"
                 )
             }
@@ -1595,6 +1610,42 @@ struct ChatHomeView: View {
     }
 
     private func normalizeStructuredResult(_ result: MockAgentResult) -> MockAgentResult {
+        if result.actionType == MockAgentIntent.createReminder.rawValue,
+           let envelope = decodePayload(from: result.payloadJSON),
+           let rawTitle = envelope.action.entities["title"]?.nonEmpty {
+            let sanitizedTitle = ReminderCommandSanitizer.title(
+                modelTitle: rawTitle,
+                sourceText: envelope.action.entities["source_text"] ?? ""
+            )
+            guard sanitizedTitle.isEmpty == false, sanitizedTitle != rawTitle else {
+                return result
+            }
+
+            var entities = envelope.action.entities
+            entities["title"] = sanitizedTitle
+            let updatedEnvelope = MockAgentEnvelope(
+                action: MockAgentActionPayload(
+                    intent: envelope.action.intent,
+                    title: envelope.action.title,
+                    entities: entities,
+                    requiresConfirmation: envelope.action.requiresConfirmation
+                ),
+                confidence: envelope.confidence,
+                summary: "准备创建任务：\(sanitizedTitle)",
+                followUpPrompt: envelope.followUpPrompt,
+                matchedSignals: envelope.matchedSignals
+            )
+            guard let payloadJSON = encodePayload(updatedEnvelope) else { return result }
+            return MockAgentResult(
+                reply: result.reply,
+                summary: "准备创建任务：\(sanitizedTitle)",
+                actionType: result.actionType,
+                payloadJSON: payloadJSON,
+                confidence: result.confidence,
+                followUpPrompt: result.followUpPrompt
+            )
+        }
+
         guard result.actionType == MockAgentIntent.planReschedule.rawValue,
               let envelope = decodePayload(from: result.payloadJSON) else {
             return result
