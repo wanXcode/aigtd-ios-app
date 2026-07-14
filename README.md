@@ -24,6 +24,7 @@ Latest release notes:
 - [v0.3.0 candidate notes](docs/releases/v0.3.0.md)
 - [v0.3.0 PRD](docs/releases/v0.3.0-prd.md)
 - [v0.3.0 test conclusion](docs/releases/v0.3.0-test-conclusion.md)
+- [v0.4.0 PRD](docs/releases/v0.4.0-prd.md)
 - [v0.2.0](docs/releases/v0.2.0.md)
 
 ## What 0.1 includes
