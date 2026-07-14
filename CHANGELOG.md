@@ -6,7 +6,7 @@ Development continues after the `0.3.0` stabilization candidate. Planned work is
 
 ## 0.3.0 - Release Candidate
 
-Stabilization release candidate validated on iPhone through build `0.3.0 (13)`; TestFlight smoke findings are addressed in hotfix candidate `0.3.0 (14)`.
+Stabilization release candidate validated on iPhone through build `0.3.0 (14)`; time-qualified duplicate deletion is addressed in hotfix candidate `0.3.0 (15)`.
 
 ### Added
 
@@ -33,12 +33,14 @@ Stabilization release candidate validated on iPhone through build `0.3.0 (13)`; 
 - strengthened delete matching so one exact result plus other plausible candidates requires clarification
 - declared the app's non-exempt encryption usage in generated Info.plist to avoid repeated TestFlight export-compliance prompts
 - advanced the TestFlight smoke-test hotfix candidate to build `0.3.0 (14)`
+- advanced the time-qualified deletion hotfix candidate to build `0.3.0 (15)`
 
 ### Fixed
 
 - fixed single-reminder time changes being misclassified as batch rescheduling by adding an executable `update_reminder` action
 - fixed generated reschedule plans being marked failed before the user could apply them
 - fixed exact duplicate reminder titles bypassing ambiguity protection during destructive actions
+- fixed explicit delete dates and times being discarded before duplicate-candidate resolution
 - fixed plain conversation briefly showing an incorrect provisional Action card before the model intent was known
 - fixed newly completed reminder syncs displaying as occurring “0 秒后”
 - fixed Chinese relative-date updates retaining the current clock time instead of the requested hour, and corrected next-week weekday calculation

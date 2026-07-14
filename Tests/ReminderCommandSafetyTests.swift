@@ -22,8 +22,8 @@ final class ReminderCommandSafetyTests: XCTestCase {
 
     func testStrictDeleteTreatsExactAndContainingTitlesAsAmbiguous() {
         let candidates = [
-            ReminderLookupCandidate(identifier: "exact", normalizedTitle: "重复测试", displayTitle: "重复测试（明天下午）"),
-            ReminderLookupCandidate(identifier: "malformed", normalizedTitle: "标题是“重复测试”时间是", displayTitle: "标题是“重复测试”时间是（后天下午）")
+            ReminderLookupCandidate(identifier: "exact", normalizedTitle: "重复测试", displayTitle: "重复测试（明天下午）", dueDate: nil),
+            ReminderLookupCandidate(identifier: "malformed", normalizedTitle: "标题是“重复测试”时间是", displayTitle: "标题是“重复测试”时间是（后天下午）", dueDate: nil)
         ]
 
         XCTAssertThrowsError(
@@ -41,8 +41,8 @@ final class ReminderCommandSafetyTests: XCTestCase {
 
     func testNonDestructiveLookupCanStillPreferUniqueExactMatch() throws {
         let candidates = [
-            ReminderLookupCandidate(identifier: "exact", normalizedTitle: "重复测试", displayTitle: "重复测试"),
-            ReminderLookupCandidate(identifier: "related", normalizedTitle: "准备重复测试资料", displayTitle: "准备重复测试资料")
+            ReminderLookupCandidate(identifier: "exact", normalizedTitle: "重复测试", displayTitle: "重复测试", dueDate: nil),
+            ReminderLookupCandidate(identifier: "related", normalizedTitle: "准备重复测试资料", displayTitle: "准备重复测试资料", dueDate: nil)
         ]
 
         let identifier = try ReminderCandidateResolver.resolveIdentifier(
@@ -52,5 +52,44 @@ final class ReminderCommandSafetyTests: XCTestCase {
         )
 
         XCTAssertEqual(identifier, "exact")
+    }
+
+    func testDeleteDueDateSelectsOneOfDuplicateTitles() throws {
+        let calendar = Calendar(identifier: .gregorian)
+        let first = calendar.date(from: DateComponents(year: 2026, month: 7, day: 15, hour: 15))!
+        let second = calendar.date(from: DateComponents(year: 2026, month: 7, day: 16, hour: 15))!
+        let candidates = [
+            ReminderLookupCandidate(identifier: "tomorrow", normalizedTitle: "重复测试", displayTitle: "重复测试（7月15日 15:00）", dueDate: first),
+            ReminderLookupCandidate(identifier: "day-after", normalizedTitle: "重复测试", displayTitle: "重复测试（7月16日 15:00）", dueDate: second)
+        ]
+
+        let identifier = try ReminderCandidateResolver.resolveIdentifier(
+            targetText: "重复测试",
+            candidates: candidates,
+            requireUniquePlausibleMatch: true,
+            targetDueDate: first,
+            calendar: calendar
+        )
+
+        XCTAssertEqual(identifier, "tomorrow")
+    }
+
+    func testDeleteDueDateDoesNotFallBackWhenTimeDoesNotMatch() throws {
+        let calendar = Calendar(identifier: .gregorian)
+        let existing = calendar.date(from: DateComponents(year: 2026, month: 7, day: 16, hour: 15))!
+        let requested = calendar.date(from: DateComponents(year: 2026, month: 7, day: 15, hour: 15))!
+        let candidates = [
+            ReminderLookupCandidate(identifier: "other-day", normalizedTitle: "重复测试", displayTitle: "重复测试（7月16日 15:00）", dueDate: existing)
+        ]
+
+        let identifier = try ReminderCandidateResolver.resolveIdentifier(
+            targetText: "“重复测试”",
+            candidates: candidates,
+            requireUniquePlausibleMatch: true,
+            targetDueDate: requested,
+            calendar: calendar
+        )
+
+        XCTAssertNil(identifier)
     }
 }

@@ -218,7 +218,9 @@ struct MockAgentService {
                 intent: .deleteReminder,
                 title: "删除任务",
                 entities: [
-                    "target": deletion.target
+                    "target": deletion.target,
+                    "due_date": deletion.dueDateISO8601,
+                    "source_text": content
                 ],
                 requiresConfirmation: false
             )
@@ -1182,7 +1184,7 @@ struct MockAgentService {
         return (target: target, confidence: 0.9, signals: ["complete"])
     }
 
-    private func detectDeletion(from text: String) -> (target: String, confidence: Double, signals: [String])? {
+    private func detectDeletion(from text: String) -> (target: String, dueDateISO8601: String, confidence: Double, signals: [String])? {
         guard matchesAny(text, keywords: ["删除", "删掉", "删了", "移除"]) else {
             return nil
         }
@@ -1193,8 +1195,28 @@ struct MockAgentService {
             return nil
         }
 
-        let target = findDeletionTarget(in: text) ?? findTargetText(in: text) ?? "当前这条"
-        return (target: target, confidence: 0.9, signals: ["delete"])
+        let rawTarget = findDeletionTarget(in: text) ?? findTargetText(in: text) ?? "当前这条"
+        let target = removingDueDatePhrase(from: rawTarget)
+        let dueDateISO8601 = detectDueDate(from: text)
+            .map { ISO8601DateFormatter().string(from: $0) } ?? ""
+        return (
+            target: target.isEmpty ? rawTarget : target,
+            dueDateISO8601: dueDateISO8601,
+            confidence: 0.9,
+            signals: dueDateISO8601.isEmpty ? ["delete"] : ["delete", "due_date"]
+        )
+    }
+
+    private func removingDueDatePhrase(from text: String) -> String {
+        var value = text
+        value = replacingRegex(
+            #"^(?:今天|明天|后天|大后天|今日|明日)?\s*(?:早上|上午|中午|下午|晚上|今晚)?\s*\d{1,2}\s*(?:点(?:\s*\d{1,2}\s*分)?|[:：]\s*\d{1,2})\s*(?:的)?\s*"#,
+            in: value,
+            with: ""
+        )
+        return value.trimmingCharacters(
+            in: CharacterSet(charactersIn: " ，,。；;:：\"'“”‘’").union(.whitespacesAndNewlines)
+        )
     }
 
     private func findDeletionTarget(in text: String) -> String? {

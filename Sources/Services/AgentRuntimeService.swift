@@ -547,7 +547,7 @@ struct AgentRuntimeService {
         - 对 plan_reschedule，entities 至少包含 scope、strategy、ordering、window_days、start_date、source_text
         - 对 move_reminder，entities 至少包含 target、destination_list
         - 对 complete_reminder，entities 至少包含 target
-        - 对 delete_reminder，entities 至少包含 target
+        - 对 delete_reminder，entities 至少包含 target、due_date、source_text；用户指定日期或时刻时必须写入 due_date，target 只保留任务标题
         - 只输出 JSON，不要输出 markdown，不要输出 ```json
         """
     }

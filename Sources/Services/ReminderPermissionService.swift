@@ -289,27 +289,35 @@ struct ReminderLookupCandidate: Sendable {
     let identifier: String
     let normalizedTitle: String
     let displayTitle: String
+    let dueDate: Date?
 }
 
 enum ReminderCandidateResolver {
     static func resolveIdentifier(
         targetText: String,
         candidates: [ReminderLookupCandidate],
-        requireUniquePlausibleMatch: Bool
+        requireUniquePlausibleMatch: Bool,
+        targetDueDate: Date? = nil,
+        calendar: Calendar = .current
     ) throws -> String? {
         let trimmed = normalizeQuery(targetText)
         let normalizedTarget = normalize(trimmed)
         guard normalizedTarget.isEmpty == false else { return nil }
 
+        let dateFilteredCandidates = candidates.filter { candidate in
+            guard let targetDueDate else { return true }
+            guard let candidateDueDate = candidate.dueDate else { return false }
+            return calendar.isDate(candidateDueDate, equalTo: targetDueDate, toGranularity: .minute)
+        }
         if let quotedTarget = quotedText(in: trimmed).map(normalize) {
             return try uniqueIdentifier(
                 targetText: targetText,
-                matches: candidates.filter { $0.normalizedTitle == quotedTarget }
+                matches: dateFilteredCandidates.filter { $0.normalizedTitle == quotedTarget }
             )
         }
 
-        let exactMatches = candidates.filter { $0.normalizedTitle == normalizedTarget }
-        let plausibleMatches = candidates.filter { candidate in
+        let exactMatches = dateFilteredCandidates.filter { $0.normalizedTitle == normalizedTarget }
+        let plausibleMatches = dateFilteredCandidates.filter { candidate in
             candidate.normalizedTitle.contains(normalizedTarget) ||
                 normalizedTarget.contains(candidate.normalizedTitle)
         }
@@ -627,14 +635,15 @@ struct ReminderStoreService {
     }
 
     @discardableResult
-    func deleteReminder(targetText: String) async throws -> String {
+    func deleteReminder(targetText: String, dueDate: Date? = nil) async throws -> String {
         let store = try authorizedStore()
         store.refreshSourcesIfNecessary()
 
         guard let reminderID = try await findReminderIdentifier(
             matching: targetText,
             store: store,
-            requireUniquePlausibleMatch: true
+            requireUniquePlausibleMatch: true,
+            targetDueDate: dueDate
         ),
               let reminder = store.calendarItem(withIdentifier: reminderID) as? EKReminder else {
             throw ReminderStoreError.reminderNotFound(targetText)
@@ -666,7 +675,8 @@ struct ReminderStoreService {
     private func findReminderIdentifier(
         matching targetText: String,
         store: EKEventStore,
-        requireUniquePlausibleMatch: Bool = false
+        requireUniquePlausibleMatch: Bool = false,
+        targetDueDate: Date? = nil
     ) async throws -> String? {
         let trimmed = normalizeQuery(targetText)
         guard trimmed.isEmpty == false, trimmed != "当前这条" else {
@@ -692,7 +702,8 @@ struct ReminderStoreService {
                     return ReminderLookupCandidate(
                         identifier: reminder.calendarItemIdentifier,
                         normalizedTitle: normalize(title),
-                        displayTitle: context.isEmpty ? title : "\(title)（\(context)）"
+                        displayTitle: context.isEmpty ? title : "\(title)（\(context)）",
+                        dueDate: reminder.dueDateComponents.flatMap { Calendar.current.date(from: $0) }
                     )
                 }
                 continuation.resume(returning: mapped)
@@ -702,7 +713,8 @@ struct ReminderStoreService {
         return try ReminderCandidateResolver.resolveIdentifier(
             targetText: targetText,
             candidates: candidates,
-            requireUniquePlausibleMatch: requireUniquePlausibleMatch
+            requireUniquePlausibleMatch: requireUniquePlausibleMatch,
+            targetDueDate: targetDueDate
         )
     }
 

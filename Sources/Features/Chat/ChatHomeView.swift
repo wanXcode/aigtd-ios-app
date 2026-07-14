@@ -1294,6 +1294,12 @@ struct ChatHomeView: View {
             }
 
             let target = resolvedReference.targetText
+            let targetDueDate = parseISODate(
+                actionEntityValue(
+                    in: envelope.action.entities,
+                    keys: ["due_date", "target_date", "datetime"]
+                )
+            )
             do {
                 let deletedIdentifier: String
                 if let identifier = resolvedReference.identifier {
@@ -1303,7 +1309,10 @@ struct ChatHomeView: View {
                     }
                     deletedIdentifier = identifier
                 } else {
-                    deletedIdentifier = try await ReminderStoreService().deleteReminder(targetText: target)
+                    deletedIdentifier = try await ReminderStoreService().deleteReminder(
+                        targetText: target,
+                        dueDate: targetDueDate
+                    )
                     await appModel.refreshReminderLists()
                 }
                 log.executionStatus = "success"
