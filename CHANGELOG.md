@@ -57,6 +57,7 @@ Context and memory release candidate validated through build `0.4.0 (17)`.
 - retained the original 100-case conversation evaluation baseline
 - added a separate 50-case context and memory evaluation fixture
 - passed all nine manual iPhone acceptance groups for build `0.4.0 (17)`
+- uploaded build `0.4.0 (17)` to App Store Connect for TestFlight processing
 
 ## 0.3.0 - Release Candidate
 
