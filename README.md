@@ -17,7 +17,7 @@ The current implementation is built around a simple principle:
 
 ## Version
 
-Current release candidate: `0.4.0 (17)`
+Current TestFlight-verified release: `0.4.0 (17)`
 
 Latest release notes:
 
