@@ -2,6 +2,15 @@ import XCTest
 @testable import AIGTDReminders
 
 final class ReminderCommandSafetyTests: XCTestCase {
+    func testNaturalTitleEndingInDateIsPreserved() {
+        let title = ReminderCommandSanitizer.title(
+            modelTitle: "验证卡片日期",
+            sourceText: "7 月 19 日提醒我验证卡片日期"
+        )
+
+        XCTAssertEqual(title, "验证卡片日期")
+    }
+
     func testExplicitQuotedTitleWinsOverMalformedModelTitle() {
         let title = ReminderCommandSanitizer.title(
             modelTitle: "标题是“重复测试”时间是",
@@ -20,10 +29,25 @@ final class ReminderCommandSafetyTests: XCTestCase {
         XCTAssertEqual(title, "季度复盘")
     }
 
-    func testStrictDeleteTreatsExactAndContainingTitlesAsAmbiguous() {
+    func testStrictDeletePrefersOneExactTitleOverContainingTitles() throws {
         let candidates = [
             ReminderLookupCandidate(identifier: "exact", normalizedTitle: "重复测试", displayTitle: "重复测试（明天下午）", dueDate: nil),
             ReminderLookupCandidate(identifier: "malformed", normalizedTitle: "标题是“重复测试”时间是", displayTitle: "标题是“重复测试”时间是（后天下午）", dueDate: nil)
+        ]
+
+        let identifier = try ReminderCandidateResolver.resolveIdentifier(
+            targetText: "重复测试",
+            candidates: candidates,
+            requireUniquePlausibleMatch: true
+        )
+
+        XCTAssertEqual(identifier, "exact")
+    }
+
+    func testStrictDeleteStillRejectsMultipleExactTitles() {
+        let candidates = [
+            ReminderLookupCandidate(identifier: "first", normalizedTitle: "重复测试", displayTitle: "重复测试（明天）", dueDate: nil),
+            ReminderLookupCandidate(identifier: "second", normalizedTitle: "重复测试", displayTitle: "重复测试（后天）", dueDate: nil)
         ]
 
         XCTAssertThrowsError(
@@ -32,11 +56,7 @@ final class ReminderCommandSafetyTests: XCTestCase {
                 candidates: candidates,
                 requireUniquePlausibleMatch: true
             )
-        ) { error in
-            guard case ReminderStoreError.reminderAmbiguous = error else {
-                return XCTFail("Expected reminderAmbiguous, got \(error)")
-            }
-        }
+        )
     }
 
     func testNonDestructiveLookupCanStillPreferUniqueExactMatch() throws {

@@ -225,11 +225,7 @@ private struct AgentMemoryEditView: View {
                             validationMessage = reason.rawValue
                             return
                         }
-                        AgentUserMemoryStore.shared.upsert(
-                            category: item.category,
-                            value: value,
-                            sourceMessageID: nil
-                        )
+                        AgentUserMemoryStore.shared.update(id: item.id, value: value)
                         onSave()
                         dismiss()
                     }

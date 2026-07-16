@@ -128,6 +128,48 @@ final class AgentSessionContextStoreTests: XCTestCase {
         XCTAssertTrue(store.items().isEmpty)
     }
 
+    func testTransactionRulesAppendAndExactDuplicatesAreDeduplicated() {
+        let defaults = makeDefaults()
+        let store = AgentUserMemoryStore(defaults: defaults)
+
+        let first = store.upsert(
+            category: .transactionRule,
+            value: "所有删除任务都要先确认",
+            sourceMessageID: UUID()
+        )
+        store.upsert(
+            category: .transactionRule,
+            value: "只整理项目清单里的未完成任务",
+            sourceMessageID: UUID()
+        )
+        let duplicate = store.upsert(
+            category: .transactionRule,
+            value: "所有删除任务都要先确认",
+            sourceMessageID: UUID()
+        )
+
+        XCTAssertEqual(store.items().count, 2)
+        XCTAssertEqual(duplicate.id, first.id)
+        XCTAssertEqual(
+            Set(store.items().map(\.value)),
+            Set(["所有删除任务都要先确认", "只整理项目清单里的未完成任务"])
+        )
+    }
+
+    func testEditingOneTransactionRuleDoesNotOverwriteAnother() throws {
+        let defaults = makeDefaults()
+        let store = AgentUserMemoryStore(defaults: defaults)
+        let first = store.upsert(category: .transactionRule, value: "规则一", sourceMessageID: nil)
+        let second = store.upsert(category: .transactionRule, value: "规则二", sourceMessageID: nil)
+
+        let updated = try XCTUnwrap(store.update(id: first.id, value: "规则一已修改"))
+
+        XCTAssertEqual(updated.id, first.id)
+        XCTAssertEqual(store.items().count, 2)
+        XCTAssertTrue(store.items().contains { $0.id == first.id && $0.value == "规则一已修改" })
+        XCTAssertTrue(store.items().contains { $0.id == second.id && $0.value == "规则二" })
+    }
+
     private func references(reminderID: String, now: Date) -> ReferenceContext {
         ReferenceContext(
             recentlyCreated: ReminderReference(reminderID: reminderID, recordedAt: now),

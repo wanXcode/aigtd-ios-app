@@ -53,6 +53,26 @@ struct MockAgentResult: Sendable {
     let followUpPrompt: String?
 }
 
+enum AgentResultArbitration {
+    static func shouldBypassRemote(
+        localActionType: String?,
+        hasExplicitOrdinal: Bool
+    ) -> Bool {
+        localActionType == MockAgentIntent.summarizeLists.rawValue ||
+            localActionType == MockAgentIntent.deleteReminder.rawValue ||
+            (localActionType == MockAgentIntent.updateReminder.rawValue && hasExplicitOrdinal)
+    }
+
+    static func shouldPreferLocalResult(
+        remoteActionType: String?,
+        localActionType: String?
+    ) -> Bool {
+        guard remoteActionType?.isEmpty == false else { return false }
+        return localActionType == MockAgentIntent.summarizeLists.rawValue ||
+            localActionType == MockAgentIntent.deleteReminder.rawValue
+    }
+}
+
 enum ReminderCommandSanitizer {
     static func title(modelTitle: String, sourceText: String) -> String {
         if let explicitTitle = explicitTitle(in: sourceText) {
@@ -66,7 +86,7 @@ enum ReminderCommandSanitizer {
             with: ""
         )
         value = replacingRegex(
-            #"\s*(?:[，,]\s*)?(?:时间|日期|截止时间)\s*(?:是|为|[:：])?\s*$"#,
+            #"\s*(?:[，,]\s*)?(?:时间|日期|截止时间)\s*(?:是|为|[:：])\s*$"#,
             in: value,
             with: ""
         )
@@ -117,7 +137,7 @@ struct MockAgentService {
     private let preferredUserAddress = "哥哥"
 
     private let stopPrefixes = [
-        "提醒我", "帮我", "记得", "记一下", "记录一下", "新增任务", "加个任务",
+        "提醒我", "帮我", "记住", "记得", "记一下", "记录一下", "新增任务", "加个任务",
         "新建任务", "创建任务", "记一个任务", "记个任务", "帮我记一个任务", "帮我记个任务",
         "帮我记个待办", "帮我记一个待办", "待办", "todo", "todo:", "todo："
     ]
@@ -198,15 +218,41 @@ struct MockAgentService {
             )
         }
 
+        if let details = detectReminderDetailQuery(
+            from: content,
+            reminderItems: effectiveReminderItems,
+            preferredUserAddress: preferredUserAddress
+        ) {
+            let action = MockAgentAction(
+                intent: .summarizeLists,
+                title: "查看任务详情",
+                entities: details.entities,
+                requiresConfirmation: false
+            )
+            return makeResult(
+                reply: details.reply,
+                summary: details.summary,
+                action: action,
+                confidence: details.confidence,
+                followUpPrompt: nil,
+                matchedSignals: details.signals
+            )
+        }
+
         if let update = detectReminderUpdate(from: content) {
+            var entities = [
+                "target": update.target,
+                "due_date": update.dueDateISO8601,
+                "source_text": content,
+                "preserve_existing_date": update.preservesExistingDate ? "true" : "false"
+            ]
+            if let ordinal = update.ordinal {
+                entities["ordinal"] = String(ordinal)
+            }
             let action = MockAgentAction(
                 intent: .updateReminder,
                 title: "修改任务时间",
-                entities: [
-                    "target": update.target,
-                    "due_date": update.dueDateISO8601,
-                    "source_text": content
-                ],
+                entities: entities,
                 requiresConfirmation: false
             )
             return makeResult(
@@ -462,7 +508,8 @@ struct MockAgentService {
         guard let summaryMode else { return nil }
 
         let filteredItems = summaryMode.items
-        let previewItems = filteredItems.prefix(3).map(\.title)
+        let displayedItems = Array(filteredItems.prefix(3))
+        let previewItems = displayedItems.map(\.title)
         let reply = makeSummaryReply(
             address: preferredUserAddress,
             mode: summaryMode,
@@ -478,6 +525,7 @@ struct MockAgentService {
                 "open_count": String(openItems.count),
                 "item_count": String(filteredItems.count),
                 "top_items": previewItems.joined(separator: "、"),
+                "shown_ids": displayedItems.map(\.id).joined(separator: ","),
                 "target_list": summaryMode.targetListTitle ?? ""
             ],
             reply: reply,
@@ -485,6 +533,64 @@ struct MockAgentService {
             confidence: summaryMode.confidence,
             followUpPrompt: reminderLists.isEmpty ? "要不要我先帮你建一套起步分类？" : "你也可以直接说把其中一条完成、改时间，或者换到别的清单。",
             signals: ["list_summary", summaryMode.scopeLabel]
+        )
+    }
+
+    private func detectReminderDetailQuery(
+        from text: String,
+        reminderItems: [ReminderItemInfo],
+        preferredUserAddress: String
+    ) -> (
+        entities: [String: String],
+        reply: String,
+        summary: String,
+        confidence: Double,
+        signals: [String]
+    )? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let readSignals = ["查看", "看看", "查一下", "查询", "列出", "显示", "告诉我"]
+        let detailSignals = ["备注", "是否完成", "是否已完成", "完成状态", "已完成吗"]
+        guard matchesAny(trimmed, keywords: readSignals),
+              matchesAny(trimmed, keywords: detailSignals) else {
+            return nil
+        }
+
+        let matchedItems = reminderItems
+            .filter { item in
+                item.title.isEmpty == false && trimmed.contains(item.title)
+            }
+            .sorted { lhs, rhs in
+                guard lhs.title.count != rhs.title.count else {
+                    return lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
+                }
+                return lhs.title.count > rhs.title.count
+            }
+        guard matchedItems.isEmpty == false else { return nil }
+
+        let requestsNotes = trimmed.contains("备注")
+        let details = matchedItems.map { item in
+            var parts = [item.isCompleted ? "已完成" : "未完成"]
+            if requestsNotes {
+                if item.notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    parts.append("没有可读取的备注")
+                } else {
+                    parts.append("备注：\(item.notes)")
+                }
+            }
+            return "\(item.title)：\(parts.joined(separator: "，"))"
+        }
+
+        return (
+            entities: [
+                "scope": "task_details",
+                "item_count": String(matchedItems.count),
+                "top_items": matchedItems.map(\.title).joined(separator: "、"),
+                "shown_ids": matchedItems.map(\.id).joined(separator: ",")
+            ],
+            reply: "\(preferredUserAddress)，我查到了：\(details.joined(separator: "；"))。",
+            summary: "已查看指定任务的备注和完成状态",
+            confidence: 0.98,
+            signals: ["reminder_detail_query", requestsNotes ? "notes" : "status"]
         )
     }
 
@@ -839,12 +945,19 @@ struct MockAgentService {
             #"\d{4}[-/.年]\d{1,2}[-/.月]\d{1,2}日?"#,
             #"\d{1,2}[-/.月]\d{1,2}日?"#,
             #"\d{1,2}\s*(?:点|时)(?:\s*\d{1,2}\s*分?)?"#,
+            #"[一二三四五六七八九十两]{1,3}\s*(?:点|时)(?:\s*[一二三四五六七八九十两]{1,3}\s*分?)?"#,
             #"\d{1,2}\s*[:：]\s*\d{1,2}"#,
             #"上午"#, #"下午"#, #"晚上"#, #"早上"#, #"早晨"#
         ]
         for pattern in metaPatterns {
             title = replacingRegex(pattern, in: title, with: " ")
         }
+
+        let commandPrefixes = stopPrefixes
+            .sorted { $0.count > $1.count }
+            .map(NSRegularExpression.escapedPattern(for:))
+            .joined(separator: "|")
+        title = replacingRegex("^\\s*(?:\(commandPrefixes))\\s*", in: title, with: "")
 
         for list in reminderLists where list.title.isEmpty == false {
             title = title.replacingOccurrences(of: list.title, with: " ")
@@ -891,9 +1004,10 @@ struct MockAgentService {
         calendar: Calendar
     ) -> SummaryMode? {
         let summaryKeywords = [
-            "看看", "看下", "看看我", "还有什么", "有哪些", "现在有什么", "当前有什么", "我有什么", "帮我看看"
+            "看看", "看下", "看看我", "帮我看看", "只看", "列出", "显示",
+            "还有什么", "有什么", "有哪些", "现在有什么", "当前有什么", "我有什么"
         ]
-        guard matchesAny(text, keywords: summaryKeywords) || containsAnyScopeKeyword(text) else {
+        guard matchesAny(text, keywords: summaryKeywords) else {
             return nil
         }
 
@@ -1076,7 +1190,14 @@ struct MockAgentService {
 
     private func detectReminderUpdate(
         from text: String
-    ) -> (target: String, dueDateISO8601: String, confidence: Double, signals: [String])? {
+    ) -> (
+        target: String,
+        dueDateISO8601: String,
+        ordinal: Int?,
+        preservesExistingDate: Bool,
+        confidence: Double,
+        signals: [String]
+    )? {
         let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let updateSignals = ["改到", "调整到", "延后到", "推迟到", "延期到"]
         guard matchesAny(normalized, keywords: updateSignals),
@@ -1093,9 +1214,33 @@ struct MockAgentService {
         return (
             target: target,
             dueDateISO8601: ISO8601DateFormatter().string(from: dueDate),
+            ordinal: ordinalReference(in: normalized),
+            preservesExistingDate: containsExplicitDateReference(in: normalized) == false,
             confidence: 0.94,
             signals: ["update_reminder", "single_target", "due_date"]
         )
+    }
+
+    private func ordinalReference(in text: String) -> Int? {
+        if let match = firstMatch(in: text, pattern: #"第\s*(\d+)\s*(?:条|个)"#),
+           let value = match.first.flatMap(Int.init) {
+            return value
+        }
+        let chineseOrdinals = [
+            "第一": 1, "第二": 2, "第三": 3, "第四": 4, "第五": 5,
+            "第六": 6, "第七": 7, "第八": 8, "第九": 9, "第十": 10
+        ]
+        return chineseOrdinals.first { text.contains($0.key) }?.value
+    }
+
+    private func containsExplicitDateReference(in text: String) -> Bool {
+        let dateSignals = [
+            "今天", "今日", "今晚", "明天", "明日", "后天", "大后天",
+            "周一", "周二", "周三", "周四", "周五", "周六", "周日", "星期",
+            "下周", "本周", "下个月", "月底", "月末"
+        ]
+        return matchesAny(text, keywords: dateSignals) ||
+            matchesRegex(text, pattern: #"\d{1,2}\s*月\s*\d{1,2}\s*[日号]?"#)
     }
 
     private func updateTarget(in text: String) -> String? {
@@ -1260,7 +1405,7 @@ struct MockAgentService {
     }
 
     private func detectDeletion(from text: String) -> (target: String, dueDateISO8601: String, confidence: Double, signals: [String])? {
-        guard matchesAny(text, keywords: ["删除", "删掉", "删了", "移除"]) else {
+        guard isExplicitDeletionCommand(text) else {
             return nil
         }
 
@@ -1280,6 +1425,21 @@ struct MockAgentService {
             confidence: 0.9,
             signals: dueDateISO8601.isEmpty ? ["delete"] : ["delete", "due_date"]
         )
+    }
+
+    private func isExplicitDeletionCommand(_ text: String) -> Bool {
+        let patterns = [
+            #"^\s*(?:(?:请|帮我|麻烦(?:你)?|替我|给我|我想|我要)\s*)?(?:删除|删掉|删了|移除)\s*.+$"#,
+            #"^\s*(?:(?:请|帮我|麻烦(?:你)?|替我|给我)\s*)?把\s*.+\s*(?:删除|删掉|删了|移除)\s*[。！!]?$"#
+        ]
+
+        return patterns.contains { pattern in
+            guard let regex = try? NSRegularExpression(pattern: pattern) else {
+                return false
+            }
+            let range = NSRange(text.startIndex..<text.endIndex, in: text)
+            return regex.firstMatch(in: text, range: range) != nil
+        }
     }
 
     private func removingDueDatePhrase(from text: String) -> String {

@@ -17,6 +17,29 @@ enum AgentMemoryRejectionReason: String, Equatable, Sendable {
     case ordinaryEmotion = "普通情绪不属于长期记忆"
     case outsideWhitelist = "内容不属于长期记忆白名单"
     case emptyValue = "没有可保存的长期规则"
+
+    var userFacingReply: String {
+        switch self {
+        case .sensitiveContact:
+            "为了保护你的隐私，我不会把手机号、邮箱等联系方式保存到长期记忆中。"
+        case .sensitiveAddress:
+            "为了保护你的隐私，我不会把地址信息保存到长期记忆中。"
+        case .sensitiveHealth:
+            "为了保护你的隐私，我不会把健康信息保存到长期记忆中。"
+        case .sensitiveFinancial:
+            "为了保护你的隐私，我不会把财务信息保存到长期记忆中。"
+        case .credential:
+            "为了保护账户安全，我不会把密码、密钥或凭证保存到长期记忆中。"
+        case .oneTimeTask:
+            "这是一项单次任务，我不会把它保存为长期偏好。"
+        case .ordinaryEmotion:
+            "这句话我会留在当前对话中，不会保存为长期偏好。"
+        case .outsideWhitelist:
+            "这项内容不属于可保存的长期偏好，我不会写入长期记忆。"
+        case .emptyValue:
+            "我还没有识别出可保存的长期规则，所以没有写入长期记忆。"
+        }
+    }
 }
 
 enum AgentMemoryPolicyDecision: Equatable, Sendable {

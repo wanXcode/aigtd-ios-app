@@ -50,6 +50,14 @@ final class AgentMemoryPolicyTests: XCTestCase {
         }
     }
 
+    func testSensitiveMemoryRejectionHasClearUserFacingReply() {
+        let reply = AgentMemoryRejectionReason.sensitiveContact.userFacingReply
+
+        XCTAssertTrue(reply.contains("隐私"))
+        XCTAssertTrue(reply.contains("不会"))
+        XCTAssertTrue(reply.contains("长期记忆"))
+    }
+
     func testRejectsOneTimeTaskAndOrdinaryEmotion() {
         XCTAssertEqual(
             policy.evaluate(message: "记住明天提醒我交报告"),

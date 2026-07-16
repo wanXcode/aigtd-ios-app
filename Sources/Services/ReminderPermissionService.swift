@@ -39,7 +39,92 @@ struct ReminderCreateInput: Sendable {
     let title: String
     let notes: String
     let dueDate: Date?
+    let includesTime: Bool
     let preferredListName: String?
+}
+
+struct ReminderCreationSchedule: Equatable {
+    let dueDate: Date?
+    let includesTime: Bool
+
+    static func resolve(
+        parsedDueDate: Date?,
+        sourceText: String,
+        preferences: [UserMemoryItem],
+        calendar: Calendar = .current
+    ) -> ReminderCreationSchedule {
+        guard let parsedDueDate else {
+            return ReminderCreationSchedule(dueDate: nil, includesTime: false)
+        }
+        if containsExplicitTime(sourceText) {
+            return ReminderCreationSchedule(dueDate: parsedDueDate, includesTime: true)
+        }
+        guard let preference = preferences.first(where: { $0.category == .defaultTaskTime }),
+              let time = preferredTime(from: preference.value) else {
+            return ReminderCreationSchedule(dueDate: parsedDueDate, includesTime: false)
+        }
+
+        let day = calendar.dateComponents([.year, .month, .day], from: parsedDueDate)
+        let adjusted = calendar.date(from: DateComponents(
+            timeZone: calendar.timeZone,
+            year: day.year,
+            month: day.month,
+            day: day.day,
+            hour: time.hour,
+            minute: time.minute
+        ))
+        return ReminderCreationSchedule(dueDate: adjusted ?? parsedDueDate, includesTime: true)
+    }
+
+    private static func containsExplicitTime(_ text: String) -> Bool {
+        if ["早上", "上午", "中午", "下午", "晚上", "今晚", "早晨"].contains(where: text.contains) {
+            return true
+        }
+        return matches(text, pattern: #"(?:\d{1,2}|[零〇一二两三四五六七八九十两]+)\s*(?:点|时|[:：])"#)
+    }
+
+    private static func preferredTime(from text: String) -> (hour: Int, minute: Int)? {
+        let normalized = normalizeChineseHour(in: text)
+        guard let regex = try? NSRegularExpression(
+            pattern: #"(\d{1,2})\s*(?:点|时|[:：])(?:\s*(\d{1,2})\s*分?)?"#
+        ) else { return nil }
+        let range = NSRange(normalized.startIndex..<normalized.endIndex, in: normalized)
+        guard let match = regex.firstMatch(in: normalized, range: range),
+              let hourRange = Range(match.range(at: 1), in: normalized),
+              var hour = Int(normalized[hourRange]) else { return nil }
+        var minute = 0
+        if match.range(at: 2).location != NSNotFound,
+           let minuteRange = Range(match.range(at: 2), in: normalized) {
+            minute = Int(normalized[minuteRange]) ?? 0
+        }
+        if ["下午", "晚上", "今晚"].contains(where: normalized.contains), hour < 12 {
+            hour += 12
+        } else if ["上午", "早上", "早晨"].contains(where: normalized.contains), hour == 12 {
+            hour = 0
+        }
+        return (min(max(hour, 0), 23), min(max(minute, 0), 59))
+    }
+
+    private static func normalizeChineseHour(in text: String) -> String {
+        let values = [
+            "二十三": "23", "二十二": "22", "二十一": "21", "二十": "20",
+            "十九": "19", "十八": "18", "十七": "17", "十六": "16", "十五": "15",
+            "十四": "14", "十三": "13", "十二": "12", "十一": "11", "十": "10",
+            "九": "9", "八": "8", "七": "7", "六": "6", "五": "5", "四": "4",
+            "三": "3", "二": "2", "两": "2", "一": "1", "零": "0", "〇": "0"
+        ]
+        var result = text
+        for (source, target) in values {
+            result = result.replacingOccurrences(of: source, with: target)
+        }
+        return result
+    }
+
+    private static func matches(_ text: String, pattern: String) -> Bool {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return false }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        return regex.firstMatch(in: text, range: range) != nil
+    }
 }
 
 struct ReschedulePlanItem: Codable, Hashable, Sendable {
@@ -322,14 +407,14 @@ enum ReminderCandidateResolver {
                 normalizedTarget.contains(candidate.normalizedTitle)
         }
 
+        if exactMatches.isEmpty == false {
+            return try uniqueIdentifier(targetText: targetText, matches: exactMatches)
+        }
         if requireUniquePlausibleMatch, plausibleMatches.count > 1 {
             throw ReminderStoreError.reminderAmbiguous(
                 targetText,
                 plausibleMatches.map(\.displayTitle)
             )
-        }
-        if exactMatches.isEmpty == false {
-            return try uniqueIdentifier(targetText: targetText, matches: exactMatches)
         }
         return try uniqueIdentifier(targetText: targetText, matches: plausibleMatches)
     }
@@ -517,10 +602,9 @@ struct ReminderStoreService {
         let trimmedNotes = input.notes.trimmingCharacters(in: .whitespacesAndNewlines)
         reminder.notes = trimmedNotes.isEmpty ? nil : trimmedNotes
         if let dueDate = input.dueDate {
-            reminder.dueDateComponents = Calendar.current.dateComponents(
-                in: .current,
-                from: dueDate
-            )
+            reminder.dueDateComponents = input.includesTime
+                ? Calendar.current.dateComponents(in: .current, from: dueDate)
+                : Calendar.current.dateComponents([.year, .month, .day], from: dueDate)
         }
 
         try store.save(reminder, commit: true)

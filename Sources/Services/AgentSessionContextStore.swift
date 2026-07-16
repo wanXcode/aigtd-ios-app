@@ -227,7 +227,17 @@ final class AgentUserMemoryStore: @unchecked Sendable {
             let timestamp = now()
             let cleaned = String(value.trimmingCharacters(in: .whitespacesAndNewlines).prefix(240))
             let item: UserMemoryItem
-            if let index = items.firstIndex(where: { $0.category == category }) {
+            let matchingIndex: Int?
+            if category == .transactionRule {
+                matchingIndex = items.firstIndex {
+                    $0.category == category &&
+                        $0.value.trimmingCharacters(in: .whitespacesAndNewlines)
+                            .localizedCaseInsensitiveCompare(cleaned) == .orderedSame
+                }
+            } else {
+                matchingIndex = items.firstIndex(where: { $0.category == category })
+            }
+            if let index = matchingIndex {
                 items[index].value = cleaned
                 items[index].updatedAt = timestamp
                 item = items[index]
@@ -242,6 +252,19 @@ final class AgentUserMemoryStore: @unchecked Sendable {
                 )
                 items.append(item)
             }
+            saveUnlocked(items)
+            return item
+        }
+    }
+
+    @discardableResult
+    func update(id: UUID, value: String) -> UserMemoryItem? {
+        lock.withAgentContextLock {
+            var items = loadUnlocked()
+            guard let index = items.firstIndex(where: { $0.id == id }) else { return nil }
+            items[index].value = String(value.trimmingCharacters(in: .whitespacesAndNewlines).prefix(240))
+            items[index].updatedAt = now()
+            let item = items[index]
             saveUnlocked(items)
             return item
         }

@@ -27,6 +27,19 @@ Context and memory release candidate validated through build `0.4.0 (17)`.
 - long conversations retain deterministic goals, scopes, confirmed constraints, successful action facts, and related IDs
 - local fallback execution now consumes the same reminder snapshot, Agent documents, and structured preferences as the remote runtime
 - saved long-term preferences can be reviewed and edited from the context privacy screen
+- multiple transaction rules can coexist, and editing one rule no longer overwrites another
+- read-only reminder detail queries now return final note and completion-state results from the privacy-filtered local snapshot
+
+### Fixed
+
+- fixed date-only reminders being assigned a hidden 09:00 time when no default-time preference exists
+- fixed reminder cards omitting explicit times or disagreeing with the EventKit due date
+- fixed natural reminder titles being truncated by field-label cleanup
+- fixed delete keywords inside reminder titles being treated as destructive commands
+- fixed unique exact titles being rejected when another reminder only contained the same text
+- fixed sensitive-memory rejection and one-time reminder wording producing misleading save replies or malformed titles
+- fixed additional transaction rules replacing previously saved rules
+- fixed note and completion-state queries stopping after a generic “I will check” transition reply
 
 ### Safety
 
@@ -40,9 +53,10 @@ Context and memory release candidate validated through build `0.4.0 (17)`.
 
 ### Validation
 
-- passed the expanded full iPhone suite with 80 tests and 0 failures
+- passed the expanded full iPhone suite with 96 tests and 0 failures
 - retained the original 100-case conversation evaluation baseline
 - added a separate 50-case context and memory evaluation fixture
+- passed all nine manual iPhone acceptance groups for build `0.4.0 (17)`
 
 ## 0.3.0 - Release Candidate
 

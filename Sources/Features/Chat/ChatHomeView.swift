@@ -381,6 +381,7 @@ struct ChatHomeView: View {
         )
         let savedMemoryDescription: String?
         let pendingMemoryConfirmationDescription: String?
+        let rejectedMemoryReply: String?
         if case let .candidate(candidate) = memoryDecision {
             if isExplicitMemorySaveCommand(content) {
                 AgentUserMemoryStore.shared.upsert(
@@ -394,9 +395,15 @@ struct ChatHomeView: View {
                 savedMemoryDescription = nil
                 pendingMemoryConfirmationDescription = candidate.readableDescription
             }
+            rejectedMemoryReply = nil
+        } else if case let .rejected(reason) = memoryDecision {
+            savedMemoryDescription = nil
+            pendingMemoryConfirmationDescription = nil
+            rejectedMemoryReply = reason.userFacingReply
         } else {
             savedMemoryDescription = nil
             pendingMemoryConfirmationDescription = nil
+            rejectedMemoryReply = nil
         }
 
         let runtimeContext = AIGTDAgentDocumentStore.runtimeContext(from: agentDocuments)
@@ -421,24 +428,63 @@ struct ChatHomeView: View {
         )
         var createdLogID: UUID?
 
-        let result = await agentRuntime.respond(
+        let localReadResult = MockAgentService().respond(
             to: content,
             reminderLists: appModel.reminderLists,
             reminderItems: appModel.reminderItems,
-            configuration: activeModelConfiguration,
             agentContext: runtimeContext,
-            conversationHistory: conversationHistory,
-            contextSnapshot: contextSnapshot,
-            traceID: traceID,
-            onTextUpdate: { partialText in
-                if partialText.isEmpty == false {
-                    isStreamingReply = true
-                }
-                assistantMessage.text = partialText
-                assistantMessage.status = "streaming"
-                try? modelContext.save()
-            }
+            contextSnapshot: contextSnapshot
         )
+        let result: MockAgentResult
+        let localReadEnvelope = decodePayload(from: localReadResult.payloadJSON)
+        if let rejectedMemoryReply,
+           localReadResult.actionType == nil || localReadResult.actionType == MockAgentIntent.captureMessage.rawValue {
+            AgentTraceService.shared.record(
+                traceID: traceID,
+                stage: .remoteRequestStarted,
+                status: .skipped,
+                structure: ["local_memory_policy_rejection"]
+            )
+            result = MockAgentResult(
+                reply: rejectedMemoryReply,
+                summary: "长期记忆写入已拒绝",
+                actionType: nil,
+                payloadJSON: "{}",
+                confidence: 1,
+                followUpPrompt: nil
+            )
+        } else if AgentResultArbitration.shouldBypassRemote(
+            localActionType: localReadResult.actionType,
+            hasExplicitOrdinal: localReadEnvelope?.action.entities["ordinal"]?.nonEmpty != nil
+        ) {
+            AgentTraceService.shared.record(
+                traceID: traceID,
+                stage: .remoteRequestStarted,
+                status: .skipped,
+                actionType: localReadResult.actionType,
+                structure: ["authoritative_local_read"]
+            )
+            result = localReadResult
+        } else {
+            result = await agentRuntime.respond(
+                to: content,
+                reminderLists: appModel.reminderLists,
+                reminderItems: appModel.reminderItems,
+                configuration: activeModelConfiguration,
+                agentContext: runtimeContext,
+                conversationHistory: conversationHistory,
+                contextSnapshot: contextSnapshot,
+                traceID: traceID,
+                onTextUpdate: { partialText in
+                    if partialText.isEmpty == false {
+                        isStreamingReply = true
+                    }
+                    assistantMessage.text = partialText
+                    assistantMessage.status = "streaming"
+                    try? modelContext.save()
+                }
+            )
+        }
         let normalizedRemoteResult = normalizeStructuredResult(result)
         let executionResult = resolveExecutionResult(
             userContent: content,
@@ -469,6 +515,7 @@ struct ChatHomeView: View {
                 ?? pendingMemoryConfirmationDescription.map {
                     "我理解这是长期偏好：\($0)。为了避免误记，请用“记住：你的规则”再确认一次。"
                 }
+                ?? rejectedMemoryReply
                 ?? displayResult.reply
         assistantMessage.actionResultSummary = executionResult.actionType == nil ? "" : executionResult.summary
         assistantMessage.status = "sent"
@@ -1224,9 +1271,14 @@ struct ChatHomeView: View {
                 )
             }
 
-            let dueDate = parseISODate(envelope.action.entities["due_date"])
-            let preferredListName = envelope.action.entities["preferred_list_name"]?.nonEmpty
             let sourceText = envelope.action.entities["source_text"] ?? ""
+            let schedule = ReminderCreationSchedule.resolve(
+                parsedDueDate: parseISODate(envelope.action.entities["due_date"]),
+                sourceText: sourceText,
+                preferences: AgentUserMemoryStore.shared.items()
+            )
+            let dueDate = schedule.dueDate
+            let preferredListName = envelope.action.entities["preferred_list_name"]?.nonEmpty
             let note = envelope.action.entities["note"]?.nonEmpty ?? sourceText
 
             do {
@@ -1235,6 +1287,7 @@ struct ChatHomeView: View {
                         title: title,
                         notes: note,
                         dueDate: dueDate,
+                        includesTime: schedule.includesTime,
                         preferredListName: preferredListName
                     )
                 )
@@ -1275,7 +1328,7 @@ struct ChatHomeView: View {
                     in: envelope.action.entities,
                     keys: ["due_date", "target_date", "datetime"]
                   ),
-                  let dueDate = parseISODate(dueDateValue),
+                  let parsedDueDate = parseISODate(dueDateValue),
                   let resolvedReference = resolveUpdateReminderReference(
                     rawTarget: actionEntityValue(
                         in: envelope.action.entities,
@@ -1296,6 +1349,11 @@ struct ChatHomeView: View {
             }
 
             let target = resolvedReference.targetText
+            let dueDate = updateDueDate(
+                parsedDueDate,
+                entities: envelope.action.entities,
+                reminderIdentifier: resolvedReference.identifier
+            )
             do {
                 let updatedIdentifier: String
                 if let identifier = resolvedReference.identifier {
@@ -1312,6 +1370,7 @@ struct ChatHomeView: View {
                 await appModel.refreshReminderLists()
                 var updatedEntities = envelope.action.entities
                 updatedEntities["target"] = target
+                updatedEntities["due_date"] = ISO8601DateFormatter().string(from: dueDate)
                 if let payloadJSON = encodePayload(
                     MockAgentEnvelope(
                         action: MockAgentActionPayload(
@@ -1456,15 +1515,7 @@ struct ChatHomeView: View {
         }
 
         if result.actionType == MockAgentIntent.deleteReminder.rawValue {
-            guard let envelope = decodePayload(from: result.payloadJSON),
-                  let resolvedReference = resolveReminderReference(
-                    entities: envelope.action.entities,
-                    rawTarget: actionEntityValue(
-                        in: envelope.action.entities,
-                        keys: ["target", "title", "task_title", "task", "object"]
-                    ) ?? "",
-                    sessionID: log.sessionID
-                  ) else {
+            guard let envelope = decodePayload(from: result.payloadJSON) else {
                 log.executionStatus = "failed"
                 log.errorMessage = "无法解析要删除的任务。"
                 log.executedAt = .now
@@ -1475,7 +1526,25 @@ struct ChatHomeView: View {
                 )
             }
 
-            let target = resolvedReference.targetText
+            let rawTarget = actionEntityValue(
+                in: envelope.action.entities,
+                keys: ["target", "title", "task_title", "task", "object"]
+            ) ?? ""
+            let resolvedReference = resolveReminderReference(
+                entities: envelope.action.entities,
+                rawTarget: rawTarget,
+                sessionID: log.sessionID
+            )
+            guard let target = resolvedReference?.targetText.nonEmpty ?? rawTarget.nonEmpty else {
+                log.executionStatus = "failed"
+                log.errorMessage = "无法解析要删除的任务。"
+                log.executedAt = .now
+                try? modelContext.save()
+                return ActionExecutionOutcome(
+                    reply: "我理解的是要删除一条任务，但这次没能解析出具体目标。",
+                    summary: "删除任务失败"
+                )
+            }
             let targetDueDate = parseISODate(
                 actionEntityValue(
                     in: envelope.action.entities,
@@ -1484,7 +1553,7 @@ struct ChatHomeView: View {
             )
             do {
                 let deletedIdentifier: String
-                if let identifier = resolvedReference.identifier {
+                if let identifier = resolvedReference?.identifier {
                     let deleted = await appModel.deleteReminder(identifier: identifier)
                     guard deleted else {
                         throw ReminderStoreError.reminderNotFound(target)
@@ -1556,6 +1625,33 @@ struct ChatHomeView: View {
     private func parseISODate(_ value: String?) -> Date? {
         guard let value, value.isEmpty == false else { return nil }
         return ISO8601DateFormatter().date(from: value)
+    }
+
+    private func updateDueDate(
+        _ parsedDueDate: Date,
+        entities: [String: String],
+        reminderIdentifier: String?
+    ) -> Date {
+        guard entities["preserve_existing_date"] == "true",
+              let reminderIdentifier,
+              let existingDueDate = appModel.reminderItems.first(where: { $0.id == reminderIdentifier })?.dueDate else {
+            return parsedDueDate
+        }
+
+        let calendar = Calendar.current
+        let existingDay = calendar.dateComponents([.year, .month, .day], from: existingDueDate)
+        let requestedTime = calendar.dateComponents([.hour, .minute, .second], from: parsedDueDate)
+        return calendar.date(
+            from: DateComponents(
+                timeZone: calendar.timeZone,
+                year: existingDay.year,
+                month: existingDay.month,
+                day: existingDay.day,
+                hour: requestedTime.hour,
+                minute: requestedTime.minute,
+                second: requestedTime.second
+            )
+        ) ?? parsedDueDate
     }
 
     private func actionEntityValue(
@@ -1714,7 +1810,11 @@ struct ChatHomeView: View {
             guard let identifier = log.undoToken.nonEmpty else { return false }
             event = .deleted(reminderID: identifier)
         case MockAgentIntent.summarizeLists.rawValue:
-            let identifiers = shownReminderIDs
+            let payloadIdentifiers = decodePayload(from: log.payloadJSON)?
+                .action.entities["shown_ids"]?
+                .split(separator: ",")
+                .map(String.init) ?? []
+            let identifiers = payloadIdentifiers.isEmpty ? shownReminderIDs : payloadIdentifiers
             guard identifiers.isEmpty == false else { return false }
             event = .shown(reminderIDs: identifiers, sourceMessageID: sourceMessageID)
         default:
@@ -1935,6 +2035,12 @@ struct ChatHomeView: View {
             contextSnapshot: contextSnapshot
         )
         if isStructuredResult(remoteResult) {
+            if AgentResultArbitration.shouldPreferLocalResult(
+                remoteActionType: remoteResult.actionType,
+                localActionType: localFallback.actionType
+            ) {
+                return normalizeStructuredResult(localFallback)
+            }
             if remoteResult.actionType == MockAgentIntent.planReschedule.rawValue,
                localFallback.actionType == MockAgentIntent.updateReminder.rawValue {
                 return normalizeStructuredResult(localFallback)
@@ -1979,12 +2085,22 @@ struct ChatHomeView: View {
                 modelTitle: rawTitle,
                 sourceText: envelope.action.entities["source_text"] ?? ""
             )
-            guard sanitizedTitle.isEmpty == false, sanitizedTitle != rawTitle else {
+            guard sanitizedTitle.isEmpty == false else {
                 return result
             }
 
             var entities = envelope.action.entities
             entities["title"] = sanitizedTitle
+            let sourceText = entities["source_text"] ?? ""
+            let schedule = ReminderCreationSchedule.resolve(
+                parsedDueDate: parseISODate(entities["due_date"]),
+                sourceText: sourceText,
+                preferences: AgentUserMemoryStore.shared.items()
+            )
+            entities["due_date"] = schedule.dueDate.map {
+                ISO8601DateFormatter().string(from: $0)
+            } ?? ""
+            entities["due_date_has_time"] = schedule.includesTime ? "true" : "false"
             let updatedEnvelope = MockAgentEnvelope(
                 action: MockAgentActionPayload(
                     intent: envelope.action.intent,
@@ -2806,7 +2922,11 @@ private struct ActionResultCardView: View {
                 lines.append("任务：\(title)")
             }
             if let dueDate = payload.action.entities["due_date"]?.nonEmpty {
-                lines.append("时间：\(formattedDueDate(from: dueDate) ?? dueDate)")
+                let hasTime = payload.action.entities["due_date_has_time"] != "false"
+                let formatted = hasTime
+                    ? formattedDueDate(from: dueDate)
+                    : formattedDueDateOnly(from: dueDate)
+                lines.append("时间：\(formatted ?? dueDate)")
             }
             if let listName = payload.action.entities["preferred_list_name"]?.nonEmpty {
                 lines.append("清单：\(listName)")
@@ -2890,13 +3010,26 @@ private struct ActionResultCardView: View {
     private func formattedDueDate(from value: String) -> String? {
         guard let date = ISO8601DateFormatter().date(from: value) else { return nil }
         let calendar = Calendar.current
+        let time = date.formatted(date: .omitted, time: .shortened)
+        if calendar.isDateInToday(date) {
+            return "今天 \(time)"
+        }
+        if calendar.isDateInTomorrow(date) {
+            return "明天 \(time)"
+        }
+        return date.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    private func formattedDueDateOnly(from value: String) -> String? {
+        guard let date = ISO8601DateFormatter().date(from: value) else { return nil }
+        let calendar = Calendar.current
         if calendar.isDateInToday(date) {
             return "今天"
         }
         if calendar.isDateInTomorrow(date) {
             return "明天"
         }
-        return date.formatted(date: .abbreviated, time: .shortened)
+        return date.formatted(date: .abbreviated, time: .omitted)
     }
 
     private var cardBackground: some View {
