@@ -40,7 +40,7 @@
 - the 40-case multi-tool fixture passes JSON count and category-distribution checks
 - passed the core manual experience cases 1-11 plus empty-list and missing-list creation scenarios
 - uploaded `0.5.0 (18)` to App Store Connect for TestFlight processing on 2026-07-31
-- prepared `0.5.0 (19)` after Build 18 exposed a redundant create-then-update interaction
+- uploaded `0.5.0 (19)` after Build 18 exposed a redundant create-then-update interaction
 - TestFlight upgrade acceptance remains pending
 
 ## 0.4.0 - Release Candidate
