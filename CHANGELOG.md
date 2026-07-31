@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-`0.5.0 (18)` tool-calling and multi-action candidate passed physical-device acceptance and is awaiting TestFlight upgrade validation.
+`0.5.0 (18)` tool-calling and multi-action candidate passed physical-device acceptance, was uploaded to App Store Connect, and is awaiting TestFlight upgrade validation.
 
 ### Added
 
@@ -38,6 +38,7 @@
 - 220 XCTest methods compile and pass on `QI的iPhone`
 - the 40-case multi-tool fixture passes JSON count and category-distribution checks
 - passed the core manual experience cases 1-11 plus empty-list and missing-list creation scenarios
+- uploaded `0.5.0 (18)` to App Store Connect for TestFlight processing on 2026-07-31
 - TestFlight upgrade acceptance remains pending
 
 ## 0.4.0 - Release Candidate
