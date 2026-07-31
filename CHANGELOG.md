@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-`0.5.0 (18)` tool-calling and multi-action candidate passed physical-device acceptance, was uploaded to App Store Connect, and is awaiting TestFlight upgrade validation.
+`0.5.0 (19)` tool-calling and multi-action candidate includes the post-TestFlight interaction fix and is awaiting final upgrade validation.
 
 ### Added
 
@@ -22,6 +22,7 @@
 - new list creation now preserves the existing confirmation policy and strictly reuses an exact existing list instead of creating duplicates
 - the Agent now receives the complete Reminders list catalog, including empty lists, so explicit destinations resolve by stable list ID
 - missing explicit lists are created first and dependent task writes execute only after list creation succeeds
+- follow-up details for a newly created task no longer produce a redundant equivalent update or a misleading “无需修改” result
 
 ### Safety
 
@@ -35,10 +36,11 @@
 ### Validation
 
 - simulator `build-for-testing` passes for the app and all test targets
-- 220 XCTest methods compile and pass on `QI的iPhone`
+- 222 XCTest methods compile; the existing 220-test baseline passed on `QI的iPhone`, and the 2 hotfix regressions compile in Build 19
 - the 40-case multi-tool fixture passes JSON count and category-distribution checks
 - passed the core manual experience cases 1-11 plus empty-list and missing-list creation scenarios
 - uploaded `0.5.0 (18)` to App Store Connect for TestFlight processing on 2026-07-31
+- prepared `0.5.0 (19)` after Build 18 exposed a redundant create-then-update interaction
 - TestFlight upgrade acceptance remains pending
 
 ## 0.4.0 - Release Candidate

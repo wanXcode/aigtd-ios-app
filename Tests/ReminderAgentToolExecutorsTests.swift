@@ -46,6 +46,26 @@ final class ReminderAgentToolExecutorsTests: XCTestCase {
         XCTAssertEqual(createCount, 1)
     }
 
+    func testCreateReturnsThePersistedSchedulingFields() async throws {
+        let environment = makeEnvironment()
+        let dueDate = "2026-08-01T02:00:00Z"
+
+        let output = try await environment.executor(.createReminder).execute(
+            arguments: .init([
+                "title": .string("去上班"),
+                "due_date": .string(dueDate),
+                "includes_time": .bool(true),
+                "list_id": .string("inbox")
+            ]),
+            runID: UUID(),
+            callID: "create-scheduled"
+        )
+
+        XCTAssertEqual(output.result["title"], .string("去上班"))
+        XCTAssertEqual(output.result["due_date"], .string(dueDate))
+        XCTAssertEqual(output.result["includes_time"], .bool(true))
+    }
+
     func testCreateListReturnsStableIDAndDoesNotWriteTwiceOnReplay() async throws {
         let environment = makeEnvironment()
         let runID = UUID()

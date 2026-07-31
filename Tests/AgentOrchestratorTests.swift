@@ -47,6 +47,71 @@ final class AgentOrchestratorTests: XCTestCase {
         XCTAssertEqual(executionCount, 1)
     }
 
+    func testDropsEquivalentUpdateAfterCreatingScheduledReminder() async {
+        let runID = UUID()
+        let dueDate = "2026-08-01T02:00:00Z"
+        let model = ScriptedModelClient([
+            .init(
+                runID: runID,
+                goal: "创建明天上午十点的去上班任务",
+                phase: .toolCalls,
+                toolCalls: [
+                    .init(
+                        callID: "create-work",
+                        tool: .createReminder,
+                        arguments: .init([
+                            "title": .string("去上班"),
+                            "due_date": .string(dueDate),
+                            "includes_time": .bool(true)
+                        ])
+                    )
+                ]
+            ),
+            .init(
+                runID: runID,
+                goal: "创建明天上午十点的去上班任务",
+                phase: .toolCalls,
+                assistantDraft: "已设好：“去上班”在明天上午十点。",
+                toolCalls: [
+                    .init(
+                        callID: "redundant-update",
+                        tool: .updateReminder,
+                        arguments: .init([
+                            "reminder_id": .string("created-id"),
+                            "title": .string("去上班"),
+                            "due_date": .string(dueDate),
+                            "includes_time": .bool(true),
+                            "must_exist": .bool(true)
+                        ])
+                    )
+                ]
+            )
+        ])
+        let create = RecordingToolExecutor(
+            toolName: .createReminder,
+            riskLevel: .lowRiskWrite,
+            output: .init(result: .init([
+                "reminder_id": .string("created-id"),
+                "title": .string("去上班"),
+                "due_date": .string(dueDate),
+                "includes_time": .bool(true)
+            ]))
+        )
+        let update = RecordingToolExecutor(toolName: .updateReminder, riskLevel: .lowRiskWrite)
+
+        let result = await AgentOrchestrator(
+            modelClient: model,
+            toolExecutors: [create, update]
+        ).run(userInput: "明天去上班 上午十点", runID: runID)
+        let updateCount = await update.executionCount()
+
+        XCTAssertEqual(result.status, .succeeded)
+        XCTAssertEqual(result.finalReply, "已设好：“去上班”在明天上午十点。")
+        XCTAssertEqual(result.toolCallCount, 1)
+        XCTAssertEqual(result.toolResults.map(\.tool), [.createReminder])
+        XCTAssertEqual(updateCount, 0)
+    }
+
     func testStopsWhenModelTurnBudgetIsExhausted() async {
         let runID = UUID()
         let calls = (1...AgentOrchestrator.maxModelTurns).map { index in

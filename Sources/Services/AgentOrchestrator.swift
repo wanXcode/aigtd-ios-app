@@ -144,7 +144,23 @@ struct AgentOrchestrator: Sendable {
                         )
                     }
 
-                    var callsToProcess = decision.toolCalls
+                    var callsToProcess = callsByDroppingRedundantCreatedReminderUpdates(
+                        decision.toolCalls,
+                        priorResults: toolResults
+                    )
+                    if callsToProcess.isEmpty {
+                        let status = aggregateSuccessStatus(toolResults)
+                        return AgentRunResult(
+                            runID: runID,
+                            goal: goal,
+                            status: status,
+                            finalReply: nonempty(decision.assistantDraft) ?? "任务已经按要求创建好了。",
+                            modelTurns: modelTurns,
+                            toolCallCount: toolCallCount,
+                            toolResults: toolResults,
+                            error: nil
+                        )
+                    }
                     let containsWrite = callsToProcess.contains { call in
                         executors[call.tool]?.riskLevel != .readOnly
                     }
@@ -554,6 +570,80 @@ struct AgentOrchestrator: Sendable {
                 dependencyCallIDs: call.dependencyCallIDs
             )
         }
+    }
+
+    private func callsByDroppingRedundantCreatedReminderUpdates(
+        _ calls: [AgentToolCall],
+        priorResults: [AgentToolResult]
+    ) -> [AgentToolCall] {
+        let successful: Set<AgentToolExecutionStatus> = [.success, .alreadyApplied]
+        let created = Dictionary(
+            priorResults.compactMap { result -> (String, AgentToolArguments)? in
+                guard result.tool == .createReminder,
+                      successful.contains(result.status),
+                      case let .string(reminderID)? = result.result?["reminder_id"],
+                      let values = result.result?.values else { return nil }
+                return (reminderID, AgentToolArguments(values))
+            },
+            uniquingKeysWith: { _, latest in latest }
+        )
+
+        return calls.filter { call in
+            guard call.tool == .updateReminder,
+                  case let .string(reminderID)? = call.arguments["reminder_id"],
+                  let snapshot = created[reminderID] else { return true }
+            return isEquivalentUpdate(call.arguments, toCreatedReminder: snapshot) == false
+        }
+    }
+
+    private func isEquivalentUpdate(
+        _ update: AgentToolArguments,
+        toCreatedReminder created: AgentToolArguments
+    ) -> Bool {
+        if update["notes"] != nil || boolValue(update["clear_due_date"]) == true {
+            return false
+        }
+
+        var comparedMutation = false
+        if let title = stringValue(update["title"]) {
+            comparedMutation = true
+            guard title == stringValue(created["title"]) else { return false }
+        }
+        if case let .string(dueDate)? = update["due_date"] {
+            comparedMutation = true
+            guard case let .string(createdDueDate)? = created["due_date"],
+                  isoDatesEqual(dueDate, createdDueDate) else { return false }
+        } else if update["due_date"] != nil {
+            return false
+        }
+        if let includesTime = boolValue(update["includes_time"]) {
+            guard includesTime == boolValue(created["includes_time"]) else { return false }
+        }
+        return comparedMutation
+    }
+
+    private func stringValue(_ value: AgentJSONValue?) -> String? {
+        guard case let .string(string)? = value else { return nil }
+        return string
+    }
+
+    private func boolValue(_ value: AgentJSONValue?) -> Bool? {
+        guard case let .bool(bool)? = value else { return nil }
+        return bool
+    }
+
+    private func isoDatesEqual(_ lhs: String, _ rhs: String) -> Bool {
+        guard let left = isoDate(lhs), let right = isoDate(rhs) else {
+            return lhs == rhs
+        }
+        return abs(left.timeIntervalSince(right)) < 1
+    }
+
+    private func isoDate(_ value: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        if let date = formatter.date(from: value) { return date }
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.date(from: value)
     }
 
     private func guardedWriteReminderIDs(in calls: [AgentToolCall]) -> [String] {

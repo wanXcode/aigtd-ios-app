@@ -294,15 +294,24 @@ struct ReminderAgentToolExecutor: AgentToolExecutor {
         try await requireWriteAccess()
         let title = try arguments.requiredString("title")
         let dueDate = try arguments.date("due_date")
+        let includesTime = arguments.bool("includes_time") ?? (dueDate != nil)
         let id = try await writer.create(
             title: title,
             notes: arguments.string("notes"),
             dueDate: dueDate,
-            includesTime: arguments.bool("includes_time") ?? (dueDate != nil),
+            includesTime: includesTime,
             listID: arguments.string("list_id"),
             listTitle: arguments.string("list_title")
         )
-        return .init(result: .init(["reminder_id": .string(id), "title": .string(title)]))
+        var result: [String: AgentJSONValue] = [
+            "reminder_id": .string(id),
+            "title": .string(title),
+            "includes_time": .bool(includesTime)
+        ]
+        if let dueDate {
+            result["due_date"] = .string(ISO8601DateFormatter().string(from: dueDate))
+        }
+        return .init(result: .init(result))
     }
 
     private func createList(_ arguments: AgentToolArguments) async throws -> AgentToolExecutionOutput {

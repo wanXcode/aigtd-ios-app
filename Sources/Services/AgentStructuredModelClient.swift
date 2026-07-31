@@ -272,6 +272,7 @@ struct AgentStructuredModelClient: AgentModelClient, Sendable {
         propose_schedule 必须在 items 中逐项提供 reminder_id 与 target_due_date；不能只传 reminder_ids、start_date 或 strategy，也不能提交空 items。用户指定了每项时间时必须原样映射到对应任务。
         任何基于 search_reminders 或 get_reminder_details 结果的写操作，都必须把读取到的当前值放入 expected_list_id、expected_due_date、expected_completion，并设置 must_exist=true。字段没有值时可省略对应 expected 字段，但不得省略 must_exist。这样确认期间发生的系统外部修改才能被本地拒绝覆盖。
         reminderLists 是完整的系统提醒清单目录，空清单也会包含在内。用户明确指定清单时：目录中已有该清单必须优先使用其 list_id；目录中没有该清单必须先调用 create_list，并让后续 create_reminder 或 move_reminder 通过 depends_on 依赖该 create_list。禁止把任务静默放入默认清单。
+        create_reminder 成功后，若返回的 title、due_date 与 includes_time 已满足用户要求，下一步必须直接 final；禁止再对同一个 reminder_id 调用等价的 update_reminder。
 
         当前会话与任务上下文（已由客户端按隐私设置过滤）：
         \(contextJSON)
