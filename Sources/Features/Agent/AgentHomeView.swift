@@ -156,6 +156,11 @@ struct AgentHomeView: View {
                 }
                 .padding(.vertical, 4)
             }
+
+            Section("关于") {
+                LabeledContent("版本", value: appVersionText)
+                LabeledContent("Agent 引擎", value: "结构化工具调用 0.5")
+            }
         }
         .navigationTitle("Agent")
         .navigationDestination(isPresented: $showsModelSettings) {
@@ -181,6 +186,12 @@ struct AgentHomeView: View {
             guard newValue == .agent else { return }
             refreshPermissionStatus()
         }
+    }
+
+    private var appVersionText: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "-"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "-"
+        return "\(version) (\(build))"
     }
 
     private var selectedDocumentBinding: Binding<AgentDocument?> {

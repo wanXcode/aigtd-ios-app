@@ -36,6 +36,7 @@ struct ChatHomeView: View {
     @State private var isComposerFocused = false
     @State private var executingActionIDs: Set<UUID> = []
     private let agentRuntime = AgentRuntimeService()
+    private let conversationCoordinator = AgentConversationCoordinator()
     @StateObject private var composerFocusBridge = ComposerTextViewFocusBridge()
 
     var body: some View {
@@ -428,6 +429,30 @@ struct ChatHomeView: View {
         )
         var createdLogID: UUID?
 
+        if rejectedMemoryReply == nil,
+           savedMemoryDescription == nil,
+           pendingMemoryConfirmationDescription == nil,
+           let configuration = activeModelConfiguration {
+            let presentation = await conversationCoordinator.run(
+                userInput: content,
+                configuration: configuration,
+                contextSnapshot: contextSnapshot
+            )
+            if presentation.allowsLegacyFallback == false {
+                await finalizeStructuredPresentation(
+                    presentation,
+                    assistantMessage: assistantMessage,
+                    session: session,
+                    userContent: content
+                )
+                return
+            }
+            runtimeNotice = RuntimeNotice(
+                text: "结构化模型暂时不可用，这次已安全回退到单动作兼容模式。",
+                tone: .warning
+            )
+        }
+
         let localReadResult = MockAgentService().respond(
             to: content,
             reminderLists: appModel.reminderLists,
@@ -644,6 +669,83 @@ struct ChatHomeView: View {
         await sendPrompt(content)
     }
 
+    @MainActor
+    private func finalizeStructuredPresentation(
+        _ presentation: AgentConversationPresentation,
+        assistantMessage: ChatMessage,
+        session: ChatSession,
+        userContent: String
+    ) async {
+        assistantMessage.text = presentation.reply
+        assistantMessage.status = "sent"
+        isStreamingReply = false
+
+        let writeResults = presentation.result.toolResults.filter { isWriteTool($0.tool) }
+        let pendingWrites = presentation.result.pendingToolCalls.filter { isWriteTool($0.tool) }
+        if writeResults.isEmpty == false || pendingWrites.isEmpty == false {
+            let summary = structuredSummary(for: presentation.result)
+            assistantMessage.actionResultSummary = summary
+            if let data = try? JSONEncoder().encode(presentation) {
+                let log = ActionLog(
+                    sessionID: session.id,
+                    messageID: assistantMessage.id,
+                    actionType: "agent_run",
+                    payloadJSON: String(decoding: data, as: UTF8.self),
+                    executionStatus: actionStatus(for: presentation.result.status),
+                    errorMessage: presentation.result.error?.userVisibleMessage ?? "",
+                    executedAt: presentation.result.status == .awaitingConfirmation ? nil : .now
+                )
+                modelContext.insert(log)
+            }
+        }
+
+        session.updatedAt = .now
+        session.lastMessagePreview = userContent
+        try? modelContext.save()
+
+        if writeResults.contains(where: { [.success, .unchanged, .alreadyApplied].contains($0.status) }) {
+            await appModel.refreshReminderLists()
+        }
+        _ = updateSessionSummary(for: session.id)
+        runtimeNotice = RuntimeNotice(text: "当前回复由 0.5 结构化 Agent 完成。", tone: .success)
+        try? modelContext.save()
+    }
+
+    private func isWriteTool(_ tool: AgentToolName) -> Bool {
+        ![AgentToolName.searchReminders, .getReminderDetails, .proposeSchedule].contains(tool)
+    }
+
+    private func actionStatus(for status: AgentRunStatus) -> String {
+        switch status {
+        case .awaitingConfirmation: "awaiting_confirmation"
+        case .succeeded: "success"
+        case .partial: "partial"
+        case .cancelled: "cancelled"
+        case .failed: "failed"
+        default: "pending"
+        }
+    }
+
+    private func structuredSummary(for result: AgentRunResult) -> String {
+        if result.status == .awaitingConfirmation,
+           let proposal = result.toolResults.last(where: { $0.tool == .proposeSchedule }),
+           case let .array(items)? = proposal.result?["items"] {
+            return "等待确认 \(items.count) 项排期"
+        }
+        if let apply = result.toolResults.last(where: { $0.tool == .applySchedule }),
+           case let .integer(success)? = apply.result?["successful_count"],
+           case let .integer(failed)? = apply.result?["failed_count"] {
+            return failed == 0 ? "已完成 \(success) 项操作" : "成功 \(success) 项，失败 \(failed) 项"
+        }
+        let successful: Set<AgentToolExecutionStatus> = [.success, .unchanged, .alreadyApplied]
+        let successCount = result.toolResults.lazy.filter { successful.contains($0.status) && isWriteTool($0.tool) }.count
+        if result.status == .awaitingConfirmation {
+            return "等待确认 \(result.pendingToolCalls.filter { isWriteTool($0.tool) }.count) 项操作"
+        }
+        let failedCount = result.toolResults.lazy.filter { isWriteTool($0.tool) && !successful.contains($0.status) }.count
+        return failedCount == 0 ? "已完成 \(successCount) 项操作" : "成功 \(successCount) 项，失败 \(failedCount) 项"
+    }
+
     private func shouldRefreshContext(for content: String) -> Bool {
         if let lastSync = appModel.lastReminderSyncAt,
            Date().timeIntervalSince(lastSync) <= 5 {
@@ -706,6 +808,9 @@ struct ChatHomeView: View {
                 ),
                 recentTurns: conversationHistory,
                 sessionSummary: stored?.summary,
+                reminderLists: appModel.reminderLists.map {
+                    ReminderListContextItem(id: $0.id, title: $0.title)
+                },
                 reminders: contextItems,
                 references: stored?.references ?? .empty,
                 preferences: AgentUserMemoryStore.shared.items(),
@@ -2225,6 +2330,12 @@ struct ChatHomeView: View {
                 composerFocusRequestID = UUID()
                 composerFocusBridge.focus()
             }
+        case "agent_run":
+            if log.executionStatus == "awaiting_confirmation" {
+                Task { await confirmStructuredRun(log) }
+            } else {
+                appModel.selectedTab = .reminders
+            }
         default:
             if let envelope = decodePayload(from: log.payloadJSON),
                let followUp = envelope.followUpPrompt?.nonEmpty {
@@ -2233,6 +2344,44 @@ struct ChatHomeView: View {
                 composerFocusRequestID = UUID()
                 composerFocusBridge.focus()
             }
+        }
+    }
+
+    @MainActor
+    private func confirmStructuredRun(_ log: ActionLog) async {
+        guard log.executionStatus == "awaiting_confirmation",
+              let data = log.payloadJSON.data(using: .utf8),
+              let pending = try? JSONDecoder().decode(AgentConversationPresentation.self, from: data),
+              executingActionIDs.insert(log.id).inserted else {
+            return
+        }
+        defer { executingActionIDs.remove(log.id) }
+
+        log.executionStatus = "pending"
+        log.errorMessage = ""
+        try? modelContext.save()
+
+        let completed = await conversationCoordinator.confirm(
+            pending,
+            configuration: activeModelConfiguration
+        )
+        log.executionStatus = actionStatus(for: completed.result.status)
+        log.errorMessage = completed.result.error?.userVisibleMessage ?? ""
+        log.executedAt = .now
+        if let encoded = try? JSONEncoder().encode(completed) {
+            log.payloadJSON = String(decoding: encoded, as: UTF8.self)
+        }
+        if let messageID = log.messageID,
+           let assistantMessage = messages.first(where: { $0.id == messageID }) {
+            assistantMessage.text = completed.reply
+            assistantMessage.actionResultSummary = structuredSummary(for: completed.result)
+            assistantMessage.status = "sent"
+        }
+        try? modelContext.save()
+        if completed.result.toolResults.contains(where: {
+            isWriteTool($0.tool) && [.success, .unchanged, .alreadyApplied].contains($0.status)
+        }) {
+            await appModel.refreshReminderLists()
         }
     }
 
@@ -2750,6 +2899,14 @@ private struct ActionResultCardView: View {
             default:
                 return "正在核对"
             }
+        case "agent_run":
+            switch log.executionStatus {
+            case "awaiting_confirmation": return "准备好了"
+            case "success": return "处理好了"
+            case "partial": return "部分处理好了"
+            case "failed": return "没有处理完"
+            default: return "正在处理"
+            }
         default:
             return "我处理好了"
         }
@@ -2834,6 +2991,14 @@ private struct ActionResultCardView: View {
             default:
                 return "这条已经从提醒事项里删掉了"
             }
+        case "agent_run":
+            switch log.executionStatus {
+            case "awaiting_confirmation": return "确认后才会执行这些修改"
+            case "partial": return "部分操作已完成，未成功的项目不会显示成已完成"
+            case "failed": return log.errorMessage.nonEmpty ?? "这次操作没有执行成功"
+            case "pending": return "正在按确认过的计划逐项执行"
+            default: return "执行结果已按真实工具返回更新"
+            }
         default:
             return "这次我已经处理好了"
         }
@@ -2859,6 +3024,8 @@ private struct ActionResultCardView: View {
             return "checkmark.circle"
         case "delete_reminder":
             return "trash"
+        case "agent_run":
+            return "wand.and.sparkles.inverse"
         default:
             return "checkmark.circle.fill"
         }
@@ -2884,6 +3051,8 @@ private struct ActionResultCardView: View {
             return .green
         case "delete_reminder":
             return .red
+        case "agent_run":
+            return .blue
         default:
             return .green
         }
@@ -2912,6 +3081,9 @@ private struct ActionResultCardView: View {
     }
 
     private var payloadLines: [String] {
+        if log.actionType == "agent_run" {
+            return structuredPayloadLines
+        }
         guard let payload = parsePayloadEnvelope() else { return [] }
 
         var lines: [String] = []
@@ -3095,6 +3267,11 @@ private struct ActionResultCardView: View {
             }
         case "capture_message", "move_reminder", "complete_reminder":
             return "继续编辑"
+        case "agent_run":
+            if log.executionStatus == "awaiting_confirmation" {
+                return "执行这个计划"
+            }
+            return ["success", "partial"].contains(log.executionStatus) ? "去看清单" : nil
         default:
             return nil
         }
@@ -3106,6 +3283,112 @@ private struct ActionResultCardView: View {
             return nil
         }
         return envelope
+    }
+
+    private var structuredPresentation: AgentConversationPresentation? {
+        guard log.actionType == "agent_run",
+              let data = log.payloadJSON.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(AgentConversationPresentation.self, from: data)
+    }
+
+    private var structuredPayloadLines: [String] {
+        guard let presentation = structuredPresentation else { return [] }
+        let result = presentation.result
+        var lines = ["目标：\(result.goal)"]
+        let visiblePendingCalls = result.pendingToolCalls.filter {
+            isStructuredUserVisibleTool($0.tool)
+        }
+        let visibleResults = result.toolResults.filter {
+            isStructuredUserVisibleTool($0.tool)
+        }
+        lines.append(contentsOf: scheduleProposalLines(from: result.toolResults))
+        if visiblePendingCalls.isEmpty == false {
+            lines.append(contentsOf: visiblePendingCalls.enumerated().map { index, call in
+                "操作 \(index + 1)：\(toolLabel(call.tool))（待确认）"
+            })
+        } else {
+            lines.append(contentsOf: visibleResults.enumerated().map { index, toolResult in
+                "结果 \(index + 1)：\(toolLabel(toolResult.tool))（\(toolStatusLabel(toolResult))）"
+            })
+        }
+        return lines
+    }
+
+    private func scheduleProposalLines(from results: [AgentToolResult]) -> [String] {
+        let execution = results.last(where: { $0.tool == .applySchedule })
+        let source = execution ?? results.last(where: { $0.tool == .proposeSchedule })
+        guard let source,
+              case let .array(items)? = source.result?["items"] else {
+            return []
+        }
+        return items.prefix(8).compactMap { value in
+            guard case let .object(item) = value,
+                  case let .string(target)? = item["target_due_date"] else {
+                return nil
+            }
+            let label: String
+            if case let .string(title)? = item["title"], title.nonEmpty != nil {
+                label = title
+            } else if case let .string(itemID)? = item["item_id"] {
+                label = itemID
+            } else {
+                label = "任务"
+            }
+            var line = "\(label) -> \(formattedDueDate(from: target) ?? target)"
+            if execution != nil, case let .string(status)? = item["status"] {
+                let outcome: String = switch status {
+                case "applied": "成功"
+                case "unchanged": "无需修改"
+                case "failed": "失败"
+                case "skipped": "已跳过"
+                case "cancelled": "已取消"
+                default: "处理中"
+                }
+                line += "（\(outcome)）"
+                if case let .string(message)? = item["error_message"], message.nonEmpty != nil {
+                    line += "：\(message)"
+                }
+            }
+            return line
+        }
+    }
+
+    private func isStructuredUserVisibleTool(_ tool: AgentToolName) -> Bool {
+        tool != .searchReminders && tool != .getReminderDetails
+    }
+
+    private func toolStatusLabel(_ result: AgentToolResult) -> String {
+        if result.tool == .applySchedule,
+           case let .string(planStatus)? = result.result?["plan_status"],
+           planStatus == "partial" {
+            return "部分完成"
+        }
+        switch result.status {
+        case .success: return "成功"
+        case .unchanged: return "无需修改"
+        case .alreadyApplied: return "已执行过"
+        case .skipped: return "已跳过"
+        case .cancelled: return "已取消"
+        case .timedOut: return "超时"
+        case .failed: return result.error?.userVisibleMessage.nonEmpty ?? "失败"
+        default: return "处理中"
+        }
+    }
+
+    private func toolLabel(_ tool: AgentToolName) -> String {
+        switch tool {
+        case .createReminder: "新建任务"
+        case .createList: "新建清单"
+        case .updateReminder: "修改任务"
+        case .moveReminder: "移动任务"
+        case .completeReminder: "完成任务"
+        case .deleteReminder: "删除任务"
+        case .applySchedule: "应用排期"
+        case .proposeSchedule: "生成排期"
+        case .searchReminders: "查询任务"
+        case .getReminderDetails: "读取详情"
+        default: tool.rawValue
+        }
     }
 
     private var reschedulePhase: String {
@@ -3347,7 +3630,8 @@ private struct ChatMessageRow: View {
              MockAgentIntent.planReschedule.rawValue,
              MockAgentIntent.moveReminder.rawValue,
              MockAgentIntent.completeReminder.rawValue,
-             MockAgentIntent.deleteReminder.rawValue:
+             MockAgentIntent.deleteReminder.rawValue,
+             "agent_run":
             return true
         default:
             return false

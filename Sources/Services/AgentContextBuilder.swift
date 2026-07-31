@@ -28,6 +28,7 @@ struct AgentContextBuildInput: Sendable {
     let session: SessionContext
     let recentTurns: [AgentConversationTurn]
     let sessionSummary: SessionSummary?
+    let reminderLists: [ReminderListContextItem]
     let reminders: [ReminderContextItem]
     let references: ReferenceContext
     let preferences: [UserMemoryItem]
@@ -41,6 +42,7 @@ struct AgentContextBuildInput: Sendable {
         session: SessionContext,
         recentTurns: [AgentConversationTurn],
         sessionSummary: SessionSummary?,
+        reminderLists: [ReminderListContextItem] = [],
         reminders: [ReminderContextItem],
         references: ReferenceContext,
         preferences: [UserMemoryItem],
@@ -53,6 +55,7 @@ struct AgentContextBuildInput: Sendable {
         self.session = session
         self.recentTurns = recentTurns
         self.sessionSummary = sessionSummary
+        self.reminderLists = reminderLists
         self.reminders = reminders
         self.references = references
         self.preferences = preferences
@@ -84,6 +87,7 @@ struct AgentContextBuilder: Sendable {
             session: input.session,
             recentTurns: turns,
             sessionSummary: input.sessionSummary,
+            reminderLists: input.reminderLists,
             reminders: reminders,
             references: input.references,
             preferences: input.preferences,

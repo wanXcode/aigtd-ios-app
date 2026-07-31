@@ -121,6 +121,18 @@ final class AgentContextBuilderTests: XCTestCase {
         XCTAssertEqual(snapshot.privacy.truncatedReminderCount, 1)
     }
 
+    func testCompleteReminderListCatalogKeepsEmptyLists() {
+        let lists = [
+            ReminderListContextItem(id: "release", title: "0.5 发布"),
+            ReminderListContextItem(id: "inbox", title: "收集箱")
+        ]
+
+        let snapshot = build(reminderLists: lists, reminders: [])
+
+        XCTAssertEqual(snapshot.reminderLists, lists)
+        XCTAssertTrue(snapshot.reminders.isEmpty)
+    }
+
     func testPrivacyOptInIncludesCompletedItemsAndTruncatedNotes() {
         let privacy = AgentContextPrivacySettings(
             includesNotes: true,
@@ -214,6 +226,7 @@ final class AgentContextBuilderTests: XCTestCase {
     private func build(
         recentTurns: [AgentConversationTurn] = [],
         sessionSummary: SessionSummary? = nil,
+        reminderLists: [ReminderListContextItem] = [],
         reminders: [ReminderContextItem] = [],
         references: ReferenceContext = .empty,
         preferences: [UserMemoryItem] = [],
@@ -228,6 +241,7 @@ final class AgentContextBuilderTests: XCTestCase {
             session: SessionContext(id: UUID(), title: "Main", createdAt: now, updatedAt: now),
             recentTurns: recentTurns,
             sessionSummary: sessionSummary,
+            reminderLists: reminderLists,
             reminders: reminders,
             references: references,
             preferences: preferences,

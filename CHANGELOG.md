@@ -2,7 +2,43 @@
 
 ## Unreleased
 
-Development continues after the `0.4.0` context-and-memory candidate.
+`0.5.0 (18)` tool-calling and multi-action candidate passed physical-device acceptance and is awaiting TestFlight upgrade validation.
+
+### Added
+
+- added a strict structured model protocol and `AgentOrchestrator` loop that feeds real tool results back into model decisions
+- added ten typed Reminders tools for search, details, list creation, task creation, update, move, completion, deletion, schedule proposal, and schedule application
+- added stable `run_id` / `call_id` idempotency with a persistent 24-hour execution ledger
+- added persisted schedule plans, write preconditions, dependency-aware `depends_on` execution, partial-failure aggregation, and safe confirmation recovery after app restart
+- added privacy-redacted run diagnostics, 111 focused tool/orchestration tests, and a 40-case multi-tool evaluation fixture
+- added visible app and Agent engine version information to the Agent page
+
+### Improved
+
+- Chat now routes configured remote-model requests through the structured Agent before using the 0.4 compatibility path
+- multi-action cards remain in place and show each operation's pending, success, unchanged, skipped, timeout, or failure state
+- final failure and partial-success replies are generated from verified local tool results instead of trusting model completion claims
+- tool execution is bounded to four model turns, eight total calls, five calls per turn, and 8/12/30-second read/write/schedule timeouts
+- new list creation now preserves the existing confirmation policy and strictly reuses an exact existing list instead of creating duplicates
+- the Agent now receives the complete Reminders list catalog, including empty lists, so explicit destinations resolve by stable list ID
+- missing explicit lists are created first and dependent task writes execute only after list creation succeeds
+
+### Safety
+
+- multiple writes, list creation, schedule application, and deletion are blocked until local confirmation policy allows execution
+- failed or missing dependencies skip downstream writes instead of continuing a broken plan
+- a run that has already started using tools never falls back into the legacy executor after a network or protocol failure
+- EventKit writes re-read stable IDs and reject stale list, date, completion, or existence preconditions
+- EventKit gateway failures retain specific categories such as missing list, missing reminder, permission, conflict, or store failure instead of collapsing into a generic tool error
+- default run diagnostics store structure and hashes rather than raw titles, notes, model context, or credentials
+
+### Validation
+
+- simulator `build-for-testing` passes for the app and all test targets
+- 220 XCTest methods compile and pass on `QI的iPhone`
+- the 40-case multi-tool fixture passes JSON count and category-distribution checks
+- passed the core manual experience cases 1-11 plus empty-list and missing-list creation scenarios
+- TestFlight upgrade acceptance remains pending
 
 ## 0.4.0 - Release Candidate
 

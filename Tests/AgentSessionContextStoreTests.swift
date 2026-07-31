@@ -12,6 +12,7 @@ final class AgentSessionContextStoreTests: XCTestCase {
             session: SessionContext(id: sessionID, title: "主会话", createdAt: now, updatedAt: now),
             recentTurns: [AgentConversationTurn(role: "user", text: "把刚才那条改到明天")],
             sessionSummary: nil,
+            reminderLists: [ReminderListContextItem(id: "inbox", title: "收集箱")],
             reminders: [],
             references: .empty,
             preferences: [],
@@ -35,6 +36,43 @@ final class AgentSessionContextStoreTests: XCTestCase {
 
         XCTAssertEqual(decoded, snapshot)
         XCTAssertEqual(decoded.schemaVersion, 1)
+        XCTAssertEqual(decoded.reminderLists?.first?.title, "收集箱")
+    }
+
+    func testSnapshotWithoutReminderListCatalogStillDecodes() throws {
+        let now = Date(timeIntervalSince1970: 2_100_000_000)
+        let snapshot = AgentContextSnapshot(
+            generatedAt: now,
+            timeZoneIdentifier: "Asia/Shanghai",
+            session: SessionContext(id: UUID(), title: "旧会话", createdAt: now, updatedAt: now),
+            recentTurns: [],
+            sessionSummary: nil,
+            reminders: [],
+            references: .empty,
+            preferences: [],
+            documents: AgentDocumentContext(prompt: "p", memory: "m", solu: "s", operatingGuide: "o"),
+            privacy: ContextPrivacyDescriptor(
+                includesNotes: false,
+                includesCompletedReminders: false,
+                maximumReminderCount: 40,
+                reminderSnapshotIsStale: false,
+                originalReminderCount: 0,
+                includedReminderCount: 0,
+                truncatedReminderCount: 0,
+                truncatedTurnCount: 0
+            )
+        )
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(snapshot)) as? [String: Any]
+        )
+        object.removeValue(forKey: "reminderLists")
+
+        let decoded = try JSONDecoder().decode(
+            AgentContextSnapshot.self,
+            from: JSONSerialization.data(withJSONObject: object)
+        )
+
+        XCTAssertNil(decoded.reminderLists)
     }
 
     func testContextsAreIsolatedBySession() {

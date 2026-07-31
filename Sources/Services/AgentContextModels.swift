@@ -9,6 +9,7 @@ struct AgentContextSnapshot: Codable, Equatable, Sendable {
     let session: SessionContext
     let recentTurns: [AgentConversationTurn]
     let sessionSummary: SessionSummary?
+    let reminderLists: [ReminderListContextItem]?
     let reminders: [ReminderContextItem]
     let references: ReferenceContext
     let preferences: [UserMemoryItem]
@@ -21,6 +22,7 @@ struct AgentContextSnapshot: Codable, Equatable, Sendable {
         session: SessionContext,
         recentTurns: [AgentConversationTurn],
         sessionSummary: SessionSummary?,
+        reminderLists: [ReminderListContextItem]? = nil,
         reminders: [ReminderContextItem],
         references: ReferenceContext,
         preferences: [UserMemoryItem],
@@ -34,6 +36,7 @@ struct AgentContextSnapshot: Codable, Equatable, Sendable {
         self.session = session
         self.recentTurns = recentTurns
         self.sessionSummary = sessionSummary
+        self.reminderLists = reminderLists
         self.reminders = reminders
         self.references = references
         self.preferences = preferences
@@ -71,6 +74,11 @@ enum ReminderContextRelevance: String, Codable, CaseIterable, Sendable {
     case overdue = "overdue"
     case today = "today"
     case openItem = "open_item"
+}
+
+struct ReminderListContextItem: Codable, Equatable, Identifiable, Sendable {
+    let id: String
+    let title: String
 }
 
 struct ReminderContextItem: Codable, Equatable, Identifiable, Sendable {

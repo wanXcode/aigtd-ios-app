@@ -7,24 +7,34 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		0C90A4D6B677EACC7DFF493B /* Pods_AIGTDReminders.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 26EDE162E67FA5E8D28A8D72 /* Pods_AIGTDReminders.framework */; };
+		0417EC953AF2E553AD1E4151 /* AgentOrchestrator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B34124AB97C1BDEBF127F35 /* AgentOrchestrator.swift */; };
+		0C99A88F29D2BA41DD32D10C /* AgentStructuredModelClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABAB0D9B53C53EA0764EDC4D /* AgentStructuredModelClient.swift */; };
+		115B1B0973B4D91AFCBAAE2C /* ReminderAgentToolExecutors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 754EC8DBB26532FDC7F98EA1 /* ReminderAgentToolExecutors.swift */; };
 		124FD73019AF5E5B6A589672 /* AgentSessionContextStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54F05D02AD51F310ACA5C6EB /* AgentSessionContextStore.swift */; };
 		14FD34D3C53AEA882CEDD015 /* agent-evaluation-cases.json in Resources */ = {isa = PBXBuildFile; fileRef = 69880025DA582D706568A54C /* agent-evaluation-cases.json */; };
+		1B097FC80219208736D9F8A0 /* ReminderQueryServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC99913A440A54CDA6AD722C /* ReminderQueryServiceTests.swift */; };
+		2106D8A118B8042E2101A9FC /* Pods_AIGTDReminders.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C80AF62C16DCD3B469B242DF /* Pods_AIGTDReminders.framework */; };
 		21CF03D972636AE7F2E50D21 /* VoiceTranscriptionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E7FC6AD668F4F54377E08C3 /* VoiceTranscriptionService.swift */; };
 		230E589FD4FEE3539D2BE21C /* Secrets.local.plist.example in Resources */ = {isa = PBXBuildFile; fileRef = E0CC7F983D8C8EA3EBB59ABE /* Secrets.local.plist.example */; };
 		29C9ACB09BFE662A5BB73B8D /* AIGTDRemindersApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D23494101E3F7A590C8FAB37 /* AIGTDRemindersApp.swift */; };
 		2E671B245F8A5BD7BA0CD412 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = ADB922E4CE7166A8ED71E0BE /* Assets.xcassets */; };
 		309549CFDC9B00AB1CEE1EF4 /* RemoteResponseDebugStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F749D29C1583F86683582DA /* RemoteResponseDebugStore.swift */; };
+		378286AF9DF81837AC938608 /* AgentStructuredModelClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D47A7B3CA11CF2E8713509C /* AgentStructuredModelClientTests.swift */; };
 		38EC65C0D26ED3EE15580C62 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C87E4ACD49E00FC289F8C284 /* RootView.swift */; };
+		422DD634CB3507557E2CE48C /* AgentToolBatchExecutionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B90A8FC0F72F25FA724D22C /* AgentToolBatchExecutionTests.swift */; };
 		492401C23F008035267ACCD8 /* DefaultConfigurationSeeder.swift in Sources */ = {isa = PBXBuildFile; fileRef = A57C47BC5BA7A5574F586D6D /* DefaultConfigurationSeeder.swift */; };
 		4A8B296AAFA1B0C055BCDCF1 /* AIGTDAgentDocuments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0EC160B41D24767E78DE1E07 /* AIGTDAgentDocuments.swift */; };
+		4B7D3F9EA92D845D4065B722 /* AgentSchedulePlanStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39150E55B8EB615DD8318400 /* AgentSchedulePlanStore.swift */; };
 		4F45D2821BE12A35F19ADA20 /* AgentMemoryPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A955246A0E006B7D5B594C5F /* AgentMemoryPolicyTests.swift */; };
+		56FB35CDDEAA97B7BC50F773 /* agent_tool_eval_cases.json in Resources */ = {isa = PBXBuildFile; fileRef = 311E08002E75968D62D2922D /* agent_tool_eval_cases.json */; };
 		5955508DC49DE4BD710FB80D /* AgentDocumentContextTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29CD77AE96878FD176DEA9AD /* AgentDocumentContextTests.swift */; };
 		5A0B3033678E50DAC903D63D /* AgentReferenceResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E7C4AB01F2C8C89AA17BE5B /* AgentReferenceResolver.swift */; };
 		5BA9548F88D66AFE87FB2EB7 /* agent_context_eval_cases.json in Resources */ = {isa = PBXBuildFile; fileRef = 47F37D02EEAF6EFD7C80AD30 /* agent_context_eval_cases.json */; };
 		5BAEBB9D580B4B424A8015C4 /* AppleRemindersMapping.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B0D19F4FEB5D7DFC049EAC5 /* AppleRemindersMapping.swift */; };
+		5C0BA0AC461A267352A3E19F /* AgentToolBatchExecution.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87646A9679C75D452B03FE39 /* AgentToolBatchExecution.swift */; };
 		5D24263642CF9335EBE11075 /* AgentContextModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77D2B241DA1C9D576CCA9E49 /* AgentContextModels.swift */; };
 		60E90CD2F2129A7D8CE3CB9B /* ModelSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C92089647182248143878AD0 /* ModelSettingsView.swift */; };
+		621BFBE4E66D27620D412702 /* ReminderStoreGateway.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27193BA834B90A9D917D87CC /* ReminderStoreGateway.swift */; };
 		66ADE3A2C57E8F72541225B6 /* AgentReferenceRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AF41014B94941F66FB27B90 /* AgentReferenceRecorder.swift */; };
 		67C951FBA23E7788F9BAA103 /* AgentTraceService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDC2541D6F7FE85A0D45DB8E /* AgentTraceService.swift */; };
 		6BBCFD367C4A03B8820B222A /* AgentContextBuilderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEEC0C5AE8DE491E015A974E /* AgentContextBuilderTests.swift */; };
@@ -32,13 +42,20 @@
 		74EF71E0BB1086075B2CFA33 /* ReminderCommandSafetyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8CF40EEDF16D1BE5EE97A2B /* ReminderCommandSafetyTests.swift */; };
 		76DEE11C4B8B91F3CCA9E83A /* MockAgentService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2524DFE32D2C0242C8FBE4AF /* MockAgentService.swift */; };
 		771EE99D656DAC6E04CD8EAB /* SmokeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01EBD9BD4DB828A12F696953 /* SmokeTests.swift */; };
+		79EADE685771EF1DDAB87D5B /* ReminderAgentToolExecutorsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFD73380E6207062D47A67E7 /* ReminderAgentToolExecutorsTests.swift */; };
 		7B75D4B28D070264B12867F0 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = CF2CDEADC8E6FFC3DCB81ADA /* Localizable.strings */; };
+		83A48928971A656B939F3383 /* AgentToolExecutionLedger.swift in Sources */ = {isa = PBXBuildFile; fileRef = E66D90F440E5999D2D09D6CE /* AgentToolExecutionLedger.swift */; };
 		938468A6BB0B4F4CF5259EB1 /* AgentContextBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA59D5A19254384847732B9B /* AgentContextBuilder.swift */; };
+		953C0FA4F6185FFF7D951C4E /* ReminderQueryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5300D714E8A130D28C534A1F /* ReminderQueryService.swift */; };
+		98585CF759CA1E71D32B0EDA /* AgentOrchestratorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8A86A6560835318796C83C7 /* AgentOrchestratorTests.swift */; };
 		999F5FBA9E43C46AC3275A9A /* ReschedulePlannerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D7907A4562986BA27718E3D /* ReschedulePlannerTests.swift */; };
 		9E146E76E4B625A8C863C0C6 /* AgentMemoryPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51FAD71C0DCA3A7C7556E86F /* AgentMemoryPolicy.swift */; };
 		9FECE82229E9BDCF768543DF /* AgentContextEvaluationFixtureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A9074FC65DD6942DB495D2A /* AgentContextEvaluationFixtureTests.swift */; };
 		A3212364FC81AC936674F836 /* LocalSecretsLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4336186B28915AA2CDE22C74 /* LocalSecretsLoader.swift */; };
+		A7A0567A633A8FCDCD2714DB /* AgentSchedulePlanStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 749FCAD193FF06A604EA4CF8 /* AgentSchedulePlanStoreTests.swift */; };
+		A7D79C64F7B101F79DD8515F /* AgentRunStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 878BA0831896777B6D59F34A /* AgentRunStoreTests.swift */; };
 		ACBD27044522B194186CE16A /* AgentHomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F133E21C3EDDC5486091F74 /* AgentHomeView.swift */; };
+		BB6A91BC04BD094FDF3E2090 /* AgentToolExecutionLedgerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8673DD19E4129092BA299983 /* AgentToolExecutionLedgerTests.swift */; };
 		BC5F86342772E0B4253D9918 /* PersistenceModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BD5CC43506B2F329746582C /* PersistenceModels.swift */; };
 		BE9FD5179F7CA0F1BBF219F1 /* OnboardingRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87480D675543CCDECFB891CB /* OnboardingRootView.swift */; };
 		BEE5174E64EF034954DD2D6D /* Secrets.local.plist in Resources */ = {isa = PBXBuildFile; fileRef = DD422EEC423D82DCE927DF7B /* Secrets.local.plist */; };
@@ -54,9 +71,14 @@
 		E8EB862263A4A32243F62149 /* ReminderBatchExecution.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32062695EB97059C22AD152D /* ReminderBatchExecution.swift */; };
 		F1676C4A38E982B660DD42BD /* AgentEvaluationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0496C7A267F4FBF183BAE32 /* AgentEvaluationTests.swift */; };
 		F41C7BB38199272B501B7878 /* AgentSessionSummaryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B69BEDA26004AA0984FF1DD /* AgentSessionSummaryService.swift */; };
+		F4CBAB75B6B702B5D0BA7CF5 /* AgentToolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEB4107ADE8962E56B4FBCBD /* AgentToolModels.swift */; };
 		F7FF3684CDC0E211C9E143B8 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08C69BB61262FDDA79992046 /* AppModel.swift */; };
+		FA1175C6CEC3704F3319214F /* AgentConversationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 336AFB55EB7DFC030DE975AC /* AgentConversationCoordinator.swift */; };
 		FD2C26D7657B2BFA02D978A0 /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 208A1E640A25A8A2A70B2A0F /* MainTabView.swift */; };
 		FDDD0CF47C80525D7D3ACC41 /* AgentRuntimeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39E12F7A97E06494BA29C5DB /* AgentRuntimeService.swift */; };
+		FE54EE2491F9EF35B97AE781 /* AgentConversationCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC01ADD7C88B2618EC67D1D5 /* AgentConversationCoordinatorTests.swift */; };
+		FE9282620BC9D5EF5C8F5201 /* AgentToolEvaluationFixtureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7FBC3665E89661FA9243312 /* AgentToolEvaluationFixtureTests.swift */; };
+		FF575A4509A6BEA33F5D1B3C /* AgentRunStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0E8EDD5AF917E8DA75E9EA /* AgentRunStore.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -76,15 +98,18 @@
 		0EAFF1568B5FB78315849D55 /* RemindersOverviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemindersOverviewView.swift; sourceTree = "<group>"; };
 		0EC160B41D24767E78DE1E07 /* AIGTDAgentDocuments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIGTDAgentDocuments.swift; sourceTree = "<group>"; };
 		160FCD36BABC8572F7E86E24 /* ReminderPermissionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderPermissionService.swift; sourceTree = "<group>"; };
-		1DB8F62E41B0BEA4FBA41C74 /* Pods-AIGTDReminders.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-AIGTDReminders.release.xcconfig"; path = "Target Support Files/Pods-AIGTDReminders/Pods-AIGTDReminders.release.xcconfig"; sourceTree = "<group>"; };
 		1F749D29C1583F86683582DA /* RemoteResponseDebugStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteResponseDebugStore.swift; sourceTree = "<group>"; };
 		208A1E640A25A8A2A70B2A0F /* MainTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
 		2524DFE32D2C0242C8FBE4AF /* MockAgentService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockAgentService.swift; sourceTree = "<group>"; };
-		26EDE162E67FA5E8D28A8D72 /* Pods_AIGTDReminders.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_AIGTDReminders.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		27193BA834B90A9D917D87CC /* ReminderStoreGateway.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderStoreGateway.swift; sourceTree = "<group>"; };
 		29341403FEBF6867B9CF7C56 /* AIGTDRemindersTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = AIGTDRemindersTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		29CD77AE96878FD176DEA9AD /* AgentDocumentContextTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentDocumentContextTests.swift; sourceTree = "<group>"; };
 		2AF41014B94941F66FB27B90 /* AgentReferenceRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentReferenceRecorder.swift; sourceTree = "<group>"; };
+		2D47A7B3CA11CF2E8713509C /* AgentStructuredModelClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentStructuredModelClientTests.swift; sourceTree = "<group>"; };
+		311E08002E75968D62D2922D /* agent_tool_eval_cases.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = agent_tool_eval_cases.json; sourceTree = "<group>"; };
 		32062695EB97059C22AD152D /* ReminderBatchExecution.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderBatchExecution.swift; sourceTree = "<group>"; };
+		336AFB55EB7DFC030DE975AC /* AgentConversationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentConversationCoordinator.swift; sourceTree = "<group>"; };
+		39150E55B8EB615DD8318400 /* AgentSchedulePlanStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentSchedulePlanStore.swift; sourceTree = "<group>"; };
 		39E12F7A97E06494BA29C5DB /* AgentRuntimeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentRuntimeService.swift; sourceTree = "<group>"; };
 		3A9074FC65DD6942DB495D2A /* AgentContextEvaluationFixtureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentContextEvaluationFixtureTests.swift; sourceTree = "<group>"; };
 		3B0D19F4FEB5D7DFC049EAC5 /* AppleRemindersMapping.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleRemindersMapping.swift; sourceTree = "<group>"; };
@@ -94,47 +119,66 @@
 		47F37D02EEAF6EFD7C80AD30 /* agent_context_eval_cases.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = agent_context_eval_cases.json; sourceTree = "<group>"; };
 		4863CFAACB2D17441E45F372 /* AgentSessionContextStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentSessionContextStoreTests.swift; sourceTree = "<group>"; };
 		51FAD71C0DCA3A7C7556E86F /* AgentMemoryPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentMemoryPolicy.swift; sourceTree = "<group>"; };
+		5300D714E8A130D28C534A1F /* ReminderQueryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderQueryService.swift; sourceTree = "<group>"; };
 		54F05D02AD51F310ACA5C6EB /* AgentSessionContextStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentSessionContextStore.swift; sourceTree = "<group>"; };
 		567650749E6AF737D4B5EAD3 /* ReminderBatchExecutionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderBatchExecutionTests.swift; sourceTree = "<group>"; };
 		5BD5CC43506B2F329746582C /* PersistenceModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistenceModels.swift; sourceTree = "<group>"; };
 		69880025DA582D706568A54C /* agent-evaluation-cases.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "agent-evaluation-cases.json"; sourceTree = "<group>"; };
+		6B34124AB97C1BDEBF127F35 /* AgentOrchestrator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentOrchestrator.swift; sourceTree = "<group>"; };
+		6B90A8FC0F72F25FA724D22C /* AgentToolBatchExecutionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentToolBatchExecutionTests.swift; sourceTree = "<group>"; };
+		749FCAD193FF06A604EA4CF8 /* AgentSchedulePlanStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentSchedulePlanStoreTests.swift; sourceTree = "<group>"; };
+		754EC8DBB26532FDC7F98EA1 /* ReminderAgentToolExecutors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderAgentToolExecutors.swift; sourceTree = "<group>"; };
 		77D2B241DA1C9D576CCA9E49 /* AgentContextModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentContextModels.swift; sourceTree = "<group>"; };
 		7D792DDE49370EE7C7CAE3A3 /* ChatHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatHomeView.swift; sourceTree = "<group>"; };
 		802BD0311C392351E4A189C2 /* AIGTDReminders.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = AIGTDReminders.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		8673DD19E4129092BA299983 /* AgentToolExecutionLedgerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentToolExecutionLedgerTests.swift; sourceTree = "<group>"; };
 		87480D675543CCDECFB891CB /* OnboardingRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingRootView.swift; sourceTree = "<group>"; };
+		87646A9679C75D452B03FE39 /* AgentToolBatchExecution.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentToolBatchExecution.swift; sourceTree = "<group>"; };
+		878BA0831896777B6D59F34A /* AgentRunStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentRunStoreTests.swift; sourceTree = "<group>"; };
 		9A3ED8B29E2AE5B2F628C7A8 /* DoubaoOfficialASRSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoubaoOfficialASRSession.swift; sourceTree = "<group>"; };
+		9C6D99580E79AF09869CC7D9 /* Pods-AIGTDReminders.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-AIGTDReminders.debug.xcconfig"; path = "Target Support Files/Pods-AIGTDReminders/Pods-AIGTDReminders.debug.xcconfig"; sourceTree = "<group>"; };
 		9E7C4AB01F2C8C89AA17BE5B /* AgentReferenceResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentReferenceResolver.swift; sourceTree = "<group>"; };
 		9E7FC6AD668F4F54377E08C3 /* VoiceTranscriptionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceTranscriptionService.swift; sourceTree = "<group>"; };
 		9F133E21C3EDDC5486091F74 /* AgentHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentHomeView.swift; sourceTree = "<group>"; };
+		A101B27C3D56BB8660D83D38 /* Pods-AIGTDReminders.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-AIGTDReminders.release.xcconfig"; path = "Target Support Files/Pods-AIGTDReminders/Pods-AIGTDReminders.release.xcconfig"; sourceTree = "<group>"; };
 		A57C47BC5BA7A5574F586D6D /* DefaultConfigurationSeeder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DefaultConfigurationSeeder.swift; sourceTree = "<group>"; };
 		A955246A0E006B7D5B594C5F /* AgentMemoryPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentMemoryPolicyTests.swift; sourceTree = "<group>"; };
 		A9FE837EE7D805A602A10436 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "zh-Hans.lproj/Localizable.strings"; sourceTree = "<group>"; };
 		AAEF41BE4F7E0FC4D9F3A964 /* AgentReferenceResolverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentReferenceResolverTests.swift; sourceTree = "<group>"; };
+		ABAB0D9B53C53EA0764EDC4D /* AgentStructuredModelClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentStructuredModelClient.swift; sourceTree = "<group>"; };
 		ADB922E4CE7166A8ED71E0BE /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		BDC2541D6F7FE85A0D45DB8E /* AgentTraceService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentTraceService.swift; sourceTree = "<group>"; };
+		BEB4107ADE8962E56B4FBCBD /* AgentToolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentToolModels.swift; sourceTree = "<group>"; };
+		C80AF62C16DCD3B469B242DF /* Pods_AIGTDReminders.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_AIGTDReminders.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		C87E4ACD49E00FC289F8C284 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		C92089647182248143878AD0 /* ModelSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelSettingsView.swift; sourceTree = "<group>"; };
 		CA93481CFA9EE54302781479 /* AgentContextPrivacyView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentContextPrivacyView.swift; sourceTree = "<group>"; };
+		CC01ADD7C88B2618EC67D1D5 /* AgentConversationCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentConversationCoordinatorTests.swift; sourceTree = "<group>"; };
 		CF1E538288B1FD2501812153 /* AgentSessionSummaryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentSessionSummaryTests.swift; sourceTree = "<group>"; };
 		D0496C7A267F4FBF183BAE32 /* AgentEvaluationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentEvaluationTests.swift; sourceTree = "<group>"; };
 		D23494101E3F7A590C8FAB37 /* AIGTDRemindersApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIGTDRemindersApp.swift; sourceTree = "<group>"; };
 		D27D2ECD6E652D41FCEB4CA4 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
-		D69E4A6D8C4A8BCFF931F1EF /* Pods-AIGTDReminders.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-AIGTDReminders.debug.xcconfig"; path = "Target Support Files/Pods-AIGTDReminders/Pods-AIGTDReminders.debug.xcconfig"; sourceTree = "<group>"; };
 		DA59D5A19254384847732B9B /* AgentContextBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentContextBuilder.swift; sourceTree = "<group>"; };
+		DC99913A440A54CDA6AD722C /* ReminderQueryServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderQueryServiceTests.swift; sourceTree = "<group>"; };
 		DD422EEC423D82DCE927DF7B /* Secrets.local.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Secrets.local.plist; sourceTree = "<group>"; };
 		DEEC0C5AE8DE491E015A974E /* AgentContextBuilderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentContextBuilderTests.swift; sourceTree = "<group>"; };
 		E0CC7F983D8C8EA3EBB59ABE /* Secrets.local.plist.example */ = {isa = PBXFileReference; path = Secrets.local.plist.example; sourceTree = "<group>"; };
+		E66D90F440E5999D2D09D6CE /* AgentToolExecutionLedger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentToolExecutionLedger.swift; sourceTree = "<group>"; };
 		E740D7B5BEEB15C46306EB1E /* Pods-AIGTDReminders.release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "Pods-AIGTDReminders.release.xcconfig"; sourceTree = "<group>"; };
+		E8A86A6560835318796C83C7 /* AgentOrchestratorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentOrchestratorTests.swift; sourceTree = "<group>"; };
+		EA0E8EDD5AF917E8DA75E9EA /* AgentRunStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentRunStore.swift; sourceTree = "<group>"; };
 		EB48FD4A6260EAA256240488 /* Pods-AIGTDReminders.debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "Pods-AIGTDReminders.debug.xcconfig"; sourceTree = "<group>"; };
+		EFD73380E6207062D47A67E7 /* ReminderAgentToolExecutorsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderAgentToolExecutorsTests.swift; sourceTree = "<group>"; };
+		F7FBC3665E89661FA9243312 /* AgentToolEvaluationFixtureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentToolEvaluationFixtureTests.swift; sourceTree = "<group>"; };
 		F8CF40EEDF16D1BE5EE97A2B /* ReminderCommandSafetyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReminderCommandSafetyTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
-		4DCC558ADFDDDD3F101E3B8D /* Frameworks */ = {
+		44741B83817732E7F29D6559 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				0C90A4D6B677EACC7DFF493B /* Pods_AIGTDReminders.framework in Frameworks */,
+				2106D8A118B8042E2101A9FC /* Pods_AIGTDReminders.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -167,12 +211,20 @@
 			children = (
 				DA59D5A19254384847732B9B /* AgentContextBuilder.swift */,
 				77D2B241DA1C9D576CCA9E49 /* AgentContextModels.swift */,
+				336AFB55EB7DFC030DE975AC /* AgentConversationCoordinator.swift */,
 				51FAD71C0DCA3A7C7556E86F /* AgentMemoryPolicy.swift */,
+				6B34124AB97C1BDEBF127F35 /* AgentOrchestrator.swift */,
 				2AF41014B94941F66FB27B90 /* AgentReferenceRecorder.swift */,
 				9E7C4AB01F2C8C89AA17BE5B /* AgentReferenceResolver.swift */,
+				EA0E8EDD5AF917E8DA75E9EA /* AgentRunStore.swift */,
 				39E12F7A97E06494BA29C5DB /* AgentRuntimeService.swift */,
+				39150E55B8EB615DD8318400 /* AgentSchedulePlanStore.swift */,
 				54F05D02AD51F310ACA5C6EB /* AgentSessionContextStore.swift */,
 				3B69BEDA26004AA0984FF1DD /* AgentSessionSummaryService.swift */,
+				ABAB0D9B53C53EA0764EDC4D /* AgentStructuredModelClient.swift */,
+				87646A9679C75D452B03FE39 /* AgentToolBatchExecution.swift */,
+				E66D90F440E5999D2D09D6CE /* AgentToolExecutionLedger.swift */,
+				BEB4107ADE8962E56B4FBCBD /* AgentToolModels.swift */,
 				BDC2541D6F7FE85A0D45DB8E /* AgentTraceService.swift */,
 				0EC160B41D24767E78DE1E07 /* AIGTDAgentDocuments.swift */,
 				3B0D19F4FEB5D7DFC049EAC5 /* AppleRemindersMapping.swift */,
@@ -180,20 +232,15 @@
 				9A3ED8B29E2AE5B2F628C7A8 /* DoubaoOfficialASRSession.swift */,
 				4336186B28915AA2CDE22C74 /* LocalSecretsLoader.swift */,
 				2524DFE32D2C0242C8FBE4AF /* MockAgentService.swift */,
+				754EC8DBB26532FDC7F98EA1 /* ReminderAgentToolExecutors.swift */,
 				32062695EB97059C22AD152D /* ReminderBatchExecution.swift */,
 				160FCD36BABC8572F7E86E24 /* ReminderPermissionService.swift */,
+				5300D714E8A130D28C534A1F /* ReminderQueryService.swift */,
+				27193BA834B90A9D917D87CC /* ReminderStoreGateway.swift */,
 				1F749D29C1583F86683582DA /* RemoteResponseDebugStore.swift */,
 				9E7FC6AD668F4F54377E08C3 /* VoiceTranscriptionService.swift */,
 			);
 			path = Services;
-			sourceTree = "<group>";
-		};
-		21FD90C7829DA4388B7E57BF /* Frameworks */ = {
-			isa = PBXGroup;
-			children = (
-				26EDE162E67FA5E8D28A8D72 /* Pods_AIGTDReminders.framework */,
-			);
-			name = Frameworks;
 			sourceTree = "<group>";
 		};
 		22E507A2BE1C23BDB7861D40 /* Products */ = {
@@ -209,6 +256,7 @@
 			isa = PBXGroup;
 			children = (
 				47F37D02EEAF6EFD7C80AD30 /* agent_context_eval_cases.json */,
+				311E08002E75968D62D2922D /* agent_tool_eval_cases.json */,
 				69880025DA582D706568A54C /* agent-evaluation-cases.json */,
 			);
 			name = Fixtures;
@@ -230,6 +278,16 @@
 				01EBD9BD4DB828A12F696953 /* SmokeTests.swift */,
 			);
 			path = Support;
+			sourceTree = "<group>";
+		};
+		4FA83319C3CC36E825BB5039 /* Pods */ = {
+			isa = PBXGroup;
+			children = (
+				9C6D99580E79AF09869CC7D9 /* Pods-AIGTDReminders.debug.xcconfig */,
+				A101B27C3D56BB8660D83D38 /* Pods-AIGTDReminders.release.xcconfig */,
+			);
+			name = Pods;
+			path = Pods;
 			sourceTree = "<group>";
 		};
 		614CCB688AB11952D8C25E08 /* Resources */ = {
@@ -262,8 +320,8 @@
 				8A92B57A077FDC83ADFDB543 /* Sources */,
 				83A4F7154E14F27108306046 /* Tests */,
 				22E507A2BE1C23BDB7861D40 /* Products */,
-				C8A7BCB15640A857A8ADF26B /* Pods */,
-				21FD90C7829DA4388B7E57BF /* Frameworks */,
+				4FA83319C3CC36E825BB5039 /* Pods */,
+				CD0F4B245EF4B6A86569CCE5 /* Frameworks */,
 			);
 			sourceTree = "<group>";
 		};
@@ -280,15 +338,25 @@
 			children = (
 				DEEC0C5AE8DE491E015A974E /* AgentContextBuilderTests.swift */,
 				3A9074FC65DD6942DB495D2A /* AgentContextEvaluationFixtureTests.swift */,
+				CC01ADD7C88B2618EC67D1D5 /* AgentConversationCoordinatorTests.swift */,
 				40A347872C5391B095D16F28 /* AgentDiagnosticsTests.swift */,
 				29CD77AE96878FD176DEA9AD /* AgentDocumentContextTests.swift */,
 				D0496C7A267F4FBF183BAE32 /* AgentEvaluationTests.swift */,
 				A955246A0E006B7D5B594C5F /* AgentMemoryPolicyTests.swift */,
+				E8A86A6560835318796C83C7 /* AgentOrchestratorTests.swift */,
 				AAEF41BE4F7E0FC4D9F3A964 /* AgentReferenceResolverTests.swift */,
+				878BA0831896777B6D59F34A /* AgentRunStoreTests.swift */,
+				749FCAD193FF06A604EA4CF8 /* AgentSchedulePlanStoreTests.swift */,
 				4863CFAACB2D17441E45F372 /* AgentSessionContextStoreTests.swift */,
 				CF1E538288B1FD2501812153 /* AgentSessionSummaryTests.swift */,
+				2D47A7B3CA11CF2E8713509C /* AgentStructuredModelClientTests.swift */,
+				6B90A8FC0F72F25FA724D22C /* AgentToolBatchExecutionTests.swift */,
+				F7FBC3665E89661FA9243312 /* AgentToolEvaluationFixtureTests.swift */,
+				8673DD19E4129092BA299983 /* AgentToolExecutionLedgerTests.swift */,
+				EFD73380E6207062D47A67E7 /* ReminderAgentToolExecutorsTests.swift */,
 				567650749E6AF737D4B5EAD3 /* ReminderBatchExecutionTests.swift */,
 				F8CF40EEDF16D1BE5EE97A2B /* ReminderCommandSafetyTests.swift */,
+				DC99913A440A54CDA6AD722C /* ReminderQueryServiceTests.swift */,
 				0D7907A4562986BA27718E3D /* ReschedulePlannerTests.swift */,
 				4CE0C2590104226F5C32299F /* Support */,
 			);
@@ -324,14 +392,12 @@
 			path = Onboarding;
 			sourceTree = "<group>";
 		};
-		C8A7BCB15640A857A8ADF26B /* Pods */ = {
+		CD0F4B245EF4B6A86569CCE5 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
-				D69E4A6D8C4A8BCFF931F1EF /* Pods-AIGTDReminders.debug.xcconfig */,
-				1DB8F62E41B0BEA4FBA41C74 /* Pods-AIGTDReminders.release.xcconfig */,
+				C80AF62C16DCD3B469B242DF /* Pods_AIGTDReminders.framework */,
 			);
-			name = Pods;
-			path = Pods;
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 		FE32257AA25C2C372B1DE4DD /* Chat */ = {
@@ -366,11 +432,11 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = EA78B49CD781891BE89B532D /* Build configuration list for PBXNativeTarget "AIGTDReminders" */;
 			buildPhases = (
-				DCD7B10B35416E8D4A1E4111 /* [CP] Check Pods Manifest.lock */,
+				B6C3CAB8B5E44C9FF5A0C350 /* [CP] Check Pods Manifest.lock */,
 				396AE852FA412006169A130B /* Sources */,
 				D8B121BCAD51B7CC33C59D0C /* Resources */,
-				4DCC558ADFDDDD3F101E3B8D /* Frameworks */,
-				7BBBFEDC60E26E83AF65EF8A /* [CP] Embed Pods Frameworks */,
+				44741B83817732E7F29D6559 /* Frameworks */,
+				9C889AD8FCE33304862C73E9 /* [CP] Embed Pods Frameworks */,
 			);
 			buildRules = (
 			);
@@ -437,13 +503,14 @@
 			files = (
 				14FD34D3C53AEA882CEDD015 /* agent-evaluation-cases.json in Resources */,
 				5BA9548F88D66AFE87FB2EB7 /* agent_context_eval_cases.json in Resources */,
+				56FB35CDDEAA97B7BC50F773 /* agent_tool_eval_cases.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		7BBBFEDC60E26E83AF65EF8A /* [CP] Embed Pods Frameworks */ = {
+		9C889AD8FCE33304862C73E9 /* [CP] Embed Pods Frameworks */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -460,7 +527,7 @@
 			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-AIGTDReminders/Pods-AIGTDReminders-frameworks.sh\"\n";
 			showEnvVarsInLog = 0;
 		};
-		DCD7B10B35416E8D4A1E4111 /* [CP] Check Pods Manifest.lock */ = {
+		B6C3CAB8B5E44C9FF5A0C350 /* [CP] Check Pods Manifest.lock */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -491,15 +558,25 @@
 			files = (
 				6BBCFD367C4A03B8820B222A /* AgentContextBuilderTests.swift in Sources */,
 				9FECE82229E9BDCF768543DF /* AgentContextEvaluationFixtureTests.swift in Sources */,
+				FE54EE2491F9EF35B97AE781 /* AgentConversationCoordinatorTests.swift in Sources */,
 				BFFCC36D74C3E45ABB5E9B8B /* AgentDiagnosticsTests.swift in Sources */,
 				5955508DC49DE4BD710FB80D /* AgentDocumentContextTests.swift in Sources */,
 				F1676C4A38E982B660DD42BD /* AgentEvaluationTests.swift in Sources */,
 				4F45D2821BE12A35F19ADA20 /* AgentMemoryPolicyTests.swift in Sources */,
+				98585CF759CA1E71D32B0EDA /* AgentOrchestratorTests.swift in Sources */,
 				C6DD390F9A64E2B5ECCFCF39 /* AgentReferenceResolverTests.swift in Sources */,
+				A7D79C64F7B101F79DD8515F /* AgentRunStoreTests.swift in Sources */,
+				A7A0567A633A8FCDCD2714DB /* AgentSchedulePlanStoreTests.swift in Sources */,
 				D23C5E2BB6D26203527FF780 /* AgentSessionContextStoreTests.swift in Sources */,
 				6BD1870F03E44A35D4CFF90E /* AgentSessionSummaryTests.swift in Sources */,
+				378286AF9DF81837AC938608 /* AgentStructuredModelClientTests.swift in Sources */,
+				422DD634CB3507557E2CE48C /* AgentToolBatchExecutionTests.swift in Sources */,
+				FE9282620BC9D5EF5C8F5201 /* AgentToolEvaluationFixtureTests.swift in Sources */,
+				BB6A91BC04BD094FDF3E2090 /* AgentToolExecutionLedgerTests.swift in Sources */,
+				79EADE685771EF1DDAB87D5B /* ReminderAgentToolExecutorsTests.swift in Sources */,
 				D06EBA78038440D98FF028B7 /* ReminderBatchExecutionTests.swift in Sources */,
 				74EF71E0BB1086075B2CFA33 /* ReminderCommandSafetyTests.swift in Sources */,
+				1B097FC80219208736D9F8A0 /* ReminderQueryServiceTests.swift in Sources */,
 				999F5FBA9E43C46AC3275A9A /* ReschedulePlannerTests.swift in Sources */,
 				771EE99D656DAC6E04CD8EAB /* SmokeTests.swift in Sources */,
 			);
@@ -514,13 +591,21 @@
 				938468A6BB0B4F4CF5259EB1 /* AgentContextBuilder.swift in Sources */,
 				5D24263642CF9335EBE11075 /* AgentContextModels.swift in Sources */,
 				CCF66C5DAE7DE4C64D00174C /* AgentContextPrivacyView.swift in Sources */,
+				FA1175C6CEC3704F3319214F /* AgentConversationCoordinator.swift in Sources */,
 				ACBD27044522B194186CE16A /* AgentHomeView.swift in Sources */,
 				9E146E76E4B625A8C863C0C6 /* AgentMemoryPolicy.swift in Sources */,
+				0417EC953AF2E553AD1E4151 /* AgentOrchestrator.swift in Sources */,
 				66ADE3A2C57E8F72541225B6 /* AgentReferenceRecorder.swift in Sources */,
 				5A0B3033678E50DAC903D63D /* AgentReferenceResolver.swift in Sources */,
+				FF575A4509A6BEA33F5D1B3C /* AgentRunStore.swift in Sources */,
 				FDDD0CF47C80525D7D3ACC41 /* AgentRuntimeService.swift in Sources */,
+				4B7D3F9EA92D845D4065B722 /* AgentSchedulePlanStore.swift in Sources */,
 				124FD73019AF5E5B6A589672 /* AgentSessionContextStore.swift in Sources */,
 				F41C7BB38199272B501B7878 /* AgentSessionSummaryService.swift in Sources */,
+				0C99A88F29D2BA41DD32D10C /* AgentStructuredModelClient.swift in Sources */,
+				5C0BA0AC461A267352A3E19F /* AgentToolBatchExecution.swift in Sources */,
+				83A48928971A656B939F3383 /* AgentToolExecutionLedger.swift in Sources */,
+				F4CBAB75B6B702B5D0BA7CF5 /* AgentToolModels.swift in Sources */,
 				67C951FBA23E7788F9BAA103 /* AgentTraceService.swift in Sources */,
 				F7FF3684CDC0E211C9E143B8 /* AppModel.swift in Sources */,
 				5BAEBB9D580B4B424A8015C4 /* AppleRemindersMapping.swift in Sources */,
@@ -533,8 +618,11 @@
 				60E90CD2F2129A7D8CE3CB9B /* ModelSettingsView.swift in Sources */,
 				BE9FD5179F7CA0F1BBF219F1 /* OnboardingRootView.swift in Sources */,
 				BC5F86342772E0B4253D9918 /* PersistenceModels.swift in Sources */,
+				115B1B0973B4D91AFCBAAE2C /* ReminderAgentToolExecutors.swift in Sources */,
 				E8EB862263A4A32243F62149 /* ReminderBatchExecution.swift in Sources */,
 				C0CF1576D8ACB4BAEA59B430 /* ReminderPermissionService.swift in Sources */,
+				953C0FA4F6185FFF7D951C4E /* ReminderQueryService.swift in Sources */,
+				621BFBE4E66D27620D412702 /* ReminderStoreGateway.swift in Sources */,
 				C477F29F606A5F18AD251C43 /* RemindersOverviewView.swift in Sources */,
 				309549CFDC9B00AB1CEE1EF4 /* RemoteResponseDebugStore.swift in Sources */,
 				38EC65C0D26ED3EE15580C62 /* RootView.swift in Sources */,
@@ -599,7 +687,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 17;
+				CURRENT_PROJECT_VERSION = 18;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
@@ -619,7 +707,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
-				MARKETING_VERSION = 0.4.0;
+				MARKETING_VERSION = 0.5.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -633,7 +721,7 @@
 		};
 		4C69E33D3F7BF38FAB2A4DAD /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 1DB8F62E41B0BEA4FBA41C74 /* Pods-AIGTDReminders.release.xcconfig */;
+			baseConfigurationReference = A101B27C3D56BB8660D83D38 /* Pods-AIGTDReminders.release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
@@ -691,7 +779,7 @@
 		};
 		8F40C9BC2D271AC9AE533515 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = D69E4A6D8C4A8BCFF931F1EF /* Pods-AIGTDReminders.debug.xcconfig */;
+			baseConfigurationReference = 9C6D99580E79AF09869CC7D9 /* Pods-AIGTDReminders.debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
@@ -781,7 +869,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 17;
+				CURRENT_PROJECT_VERSION = 18;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -795,7 +883,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
-				MARKETING_VERSION = 0.4.0;
+				MARKETING_VERSION = 0.5.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "AIGTD Reminders";

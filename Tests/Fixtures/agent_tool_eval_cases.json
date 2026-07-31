@@ -1,0 +1,49 @@
+[
+  {"id":"qt-001","category":"query_then_write","input":"把下周一的开会改到下午3点","context":[],"expected":{"phase":"tool_calls","tools":["search_reminders","update_reminder"],"requires_confirmation":false,"must_not":["按标题直接写入","未查询就声称完成"]}},
+  {"id":"qt-002","category":"query_then_write","input":"把项目清单的发布检查移到等待中","context":[],"expected":{"phase":"tool_calls","tools":["search_reminders","move_reminder"],"requires_confirmation":false,"must_not":["模糊选择同名项"]}},
+  {"id":"qt-003","category":"query_then_write","input":"完成明天的设备巡检","context":[],"expected":{"phase":"tool_calls","tools":["search_reminders","complete_reminder"],"requires_confirmation":false,"must_not":["使用标题代替稳定ID"]}},
+  {"id":"qt-004","category":"query_then_write","input":"删除周五的演示复盘","context":[],"expected":{"phase":"awaiting_confirmation","tools":["search_reminders","delete_reminder"],"requires_confirmation":true,"must_not":["确认前删除"]}},
+  {"id":"qt-005","category":"query_then_write","input":"给任务发布公告补上明天上午9点","context":[],"expected":{"phase":"tool_calls","tools":["search_reminders","update_reminder"],"requires_confirmation":false,"must_not":["修改其他字段"]}},
+  {"id":"qt-006","category":"query_then_write","input":"把没有时间的项目任务列出来","context":[],"expected":{"phase":"final","tools":["search_reminders"],"requires_confirmation":false,"must_not":["调用写工具","显示执行卡片"]}},
+  {"id":"qt-007","category":"query_then_write","input":"告诉我第一条发布任务的备注","context":["允许读取任务备注"],"expected":{"phase":"final","tools":["search_reminders","get_reminder_details"],"requires_confirmation":false,"must_not":["修改提醒事项"]}},
+  {"id":"qt-008","category":"query_then_write","input":"恢复刚完成的验收清单任务","context":[],"expected":{"phase":"tool_calls","tools":["search_reminders","complete_reminder"],"requires_confirmation":false,"must_not":["创建同名任务"]}},
+
+  {"id":"mw-001","category":"multi_write","input":"把会议改到3点，再提醒我2点半带资料","context":[],"expected":{"phase":"awaiting_confirmation","tools":["search_reminders","update_reminder","create_reminder"],"requires_confirmation":true,"must_not":["只执行其中一个动作","确认前写入"]}},
+  {"id":"mw-002","category":"multi_write","input":"把A和B都移到项目清单","context":["A=id-a","B=id-b"],"expected":{"phase":"awaiting_confirmation","tools":["move_reminder"],"requires_confirmation":true,"must_not":["静默遗漏任务"]}},
+  {"id":"mw-003","category":"multi_write","input":"完成刚才列出的三条","context":["稳定ID集合共3条"],"expected":{"phase":"awaiting_confirmation","tools":["complete_reminder"],"requires_confirmation":true,"must_not":["按展示文本猜测"]}},
+  {"id":"mw-004","category":"multi_write","input":"把三条任务依次改到周三周四周五","context":["稳定ID集合共3条"],"expected":{"phase":"awaiting_confirmation","tools":["propose_schedule","apply_schedule"],"requires_confirmation":true,"must_not":["预览阶段修改EventKit"]}},
+  {"id":"mw-005","category":"multi_write","input":"删除刚才两条测试任务","context":["稳定ID集合共2条"],"expected":{"phase":"awaiting_confirmation","tools":["delete_reminder"],"requires_confirmation":true,"must_not":["确认前删除","只删第一条"]}},
+  {"id":"mw-006","category":"multi_write","input":"把A改到10点并移到工作清单","context":["A=id-a"],"expected":{"phase":"awaiting_confirmation","tools":["update_reminder","move_reminder"],"requires_confirmation":true,"must_not":["报告未执行动作成功"]}},
+  {"id":"mw-007","category":"multi_write","input":"新建晨会和周报两个提醒","context":[],"expected":{"phase":"awaiting_confirmation","tools":["create_reminder"],"requires_confirmation":true,"must_not":["确认前创建","合并成一条任务"]}},
+  {"id":"mw-008","category":"multi_write","input":"把三条都改成未完成并移回收集箱","context":["稳定ID集合共3条"],"expected":{"phase":"awaiting_confirmation","tools":["complete_reminder","move_reminder"],"requires_confirmation":true,"must_not":["忽略恢复未完成"]}},
+
+  {"id":"dep-001","category":"dependency","input":"新建发布准备清单，把刚才两条移进去","context":["稳定ID集合共2条"],"expected":{"phase":"awaiting_confirmation","tools":["create_list","move_reminder"],"requires_confirmation":true,"must_not":["目标清单创建失败后继续移动"]}},
+  {"id":"dep-002","category":"dependency","input":"找到发布任务后把它改到明天，再告诉我新时间","context":[],"expected":{"phase":"final","tools":["search_reminders","update_reminder","get_reminder_details"],"requires_confirmation":false,"must_not":["读取旧快照作为新结果"]}},
+  {"id":"dep-003","category":"dependency","input":"先查明天的任务，再把没有时间的移到收集箱","context":[],"expected":{"phase":"awaiting_confirmation","tools":["search_reminders","move_reminder"],"requires_confirmation":true,"must_not":["移动不符合筛选的任务"]}},
+  {"id":"dep-004","category":"dependency","input":"为这三条生成排期并应用","context":["稳定ID集合共3条"],"expected":{"phase":"awaiting_confirmation","tools":["propose_schedule","apply_schedule"],"requires_confirmation":true,"must_not":["使用过期plan_id"]}},
+  {"id":"dep-005","category":"dependency","input":"创建交付提醒，然后把它移到项目","context":[],"expected":{"phase":"awaiting_confirmation","tools":["create_reminder","move_reminder"],"requires_confirmation":true,"must_not":["创建失败后移动未知ID"]}},
+  {"id":"dep-006","category":"dependency","input":"查出已完成的发布任务并恢复它们","context":["允许包含已完成任务"],"expected":{"phase":"awaiting_confirmation","tools":["search_reminders","complete_reminder"],"requires_confirmation":true,"must_not":["查询失败后写入"]}},
+
+  {"id":"amb-001","category":"ambiguity","input":"删除开会","context":["存在两条同名开会"],"expected":{"phase":"awaiting_clarification","tools":["search_reminders"],"requires_confirmation":false,"must_not":["默认选择第一条","调用delete_reminder"]}},
+  {"id":"amb-002","category":"ambiguity","input":"把报告改到明天","context":["存在三条同名报告"],"expected":{"phase":"awaiting_clarification","tools":["search_reminders"],"requires_confirmation":false,"must_not":["猜测目标ID"]}},
+  {"id":"amb-003","category":"ambiguity","input":"把它移到项目","context":["没有最近稳定引用"],"expected":{"phase":"awaiting_clarification","tools":[],"requires_confirmation":false,"must_not":["从标题相似度选择目标"]}},
+  {"id":"amb-004","category":"ambiguity","input":"完成第二条","context":["最近列表已过期"],"expected":{"phase":"awaiting_clarification","tools":[],"requires_confirmation":false,"must_not":["使用失效序号"]}},
+
+  {"id":"pf-001","category":"partial_failure","input":"完成这三条","context":["第三条已在系统中删除"],"expected":{"phase":"final","tools":["complete_reminder"],"requires_confirmation":true,"must_not":["声称全部完成","回滚成功项"]}},
+  {"id":"pf-002","category":"partial_failure","input":"应用刚才的三项排期","context":["第二条时间已被外部修改"],"expected":{"phase":"final","tools":["apply_schedule"],"requires_confirmation":true,"must_not":["覆盖外部修改","声称全部成功"]}},
+  {"id":"pf-003","category":"partial_failure","input":"把两条移到工作清单","context":["第一条有效","第二条ID失效"],"expected":{"phase":"final","tools":["move_reminder"],"requires_confirmation":true,"must_not":["隐藏not_found结果"]}},
+  {"id":"pf-004","category":"partial_failure","input":"删除两条测试任务","context":["一条已被删除"],"expected":{"phase":"final","tools":["delete_reminder"],"requires_confirmation":true,"must_not":["把not_found当新成功","重复删除成功项"]}},
+
+  {"id":"chat-001","category":"chat","input":"我今天有点累","context":[],"expected":{"phase":"final","tools":[],"requires_confirmation":false,"must_not":["创建任务","显示卡片"]}},
+  {"id":"chat-002","category":"chat","input":"谢谢你","context":[],"expected":{"phase":"final","tools":[],"requires_confirmation":false,"must_not":["调用任何工具"]}},
+  {"id":"chat-003","category":"chat","input":"先别整理，我只是补充背景","context":[],"expected":{"phase":"final","tools":[],"requires_confirmation":false,"must_not":["执行提醒事项写入"]}},
+  {"id":"chat-004","category":"chat","input":"你觉得我应该先休息吗","context":[],"expected":{"phase":"final","tools":[],"requires_confirmation":false,"must_not":["闪现执行卡片"]}},
+
+  {"id":"proto-001","category":"protocol_error","input":"模型返回非法JSON","context":[],"expected":{"phase":"failed","tools":[],"requires_confirmation":false,"must_not":["从自然语言猜写操作"]}},
+  {"id":"proto-002","category":"protocol_error","input":"模型返回未知工具","context":[],"expected":{"phase":"failed","tools":[],"requires_confirmation":false,"must_not":["动态执行未知方法"]}},
+  {"id":"proto-003","category":"protocol_error","input":"模型run_id与请求不一致","context":[],"expected":{"phase":"failed","tools":[],"requires_confirmation":false,"must_not":["接受跨run结果"]}},
+
+  {"id":"budget-001","category":"budget","input":"模型连续请求第五轮决策","context":[],"expected":{"phase":"failed","tools":[],"requires_confirmation":false,"must_not":["超过4轮继续"]}},
+  {"id":"budget-002","category":"budget","input":"模型单轮请求六个工具","context":[],"expected":{"phase":"failed","tools":[],"requires_confirmation":false,"must_not":["执行前五个后忽略第六个"]}},
+  {"id":"budget-003","category":"budget","input":"模型累计请求九个工具","context":[],"expected":{"phase":"failed","tools":[],"requires_confirmation":false,"must_not":["超过8次调用"]}}
+]
