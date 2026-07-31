@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 - 2026-07-31
 
-`0.5.0 (19)` tool-calling and multi-action candidate includes the post-TestFlight interaction fix and is awaiting final upgrade validation.
+`0.5.0 (19)` completes structured tool calling, multi-action execution, and the final TestFlight upgrade acceptance.
 
 ### Added
 
@@ -41,7 +41,8 @@
 - passed the core manual experience cases 1-11 plus empty-list and missing-list creation scenarios
 - uploaded `0.5.0 (18)` to App Store Connect for TestFlight processing on 2026-07-31
 - uploaded `0.5.0 (19)` after Build 18 exposed a redundant create-then-update interaction
-- TestFlight upgrade acceptance remains pending
+- passed the Build 19 follow-up creation regression without an extra update result
+- passed the TestFlight upgrade data-safety acceptance for chat, settings, long-term memory, and Reminders data
 
 ## 0.4.0 - Release Candidate
 
