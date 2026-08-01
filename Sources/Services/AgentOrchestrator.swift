@@ -20,11 +20,16 @@ struct AgentOrchestrator: Sendable {
     private let modelClient: any AgentModelClient
     private let executors: [AgentToolName: any AgentToolExecutor]
     private let toolTimeouts: ToolTimeouts
+    private let policySettings: AgentExecutionPolicySettings
+    private let longTermRules: AgentExecutionPolicyLongTermRules
+    private let policyEvaluator = AgentExecutionPolicyEvaluator()
 
     init(
         modelClient: any AgentModelClient,
         toolExecutors: [any AgentToolExecutor] = [],
-        toolTimeouts: ToolTimeouts = .default
+        toolTimeouts: ToolTimeouts = .default,
+        policySettings: AgentExecutionPolicySettings = .init(),
+        longTermRules: AgentExecutionPolicyLongTermRules = .init()
     ) {
         self.modelClient = modelClient
         self.executors = Dictionary(
@@ -32,6 +37,8 @@ struct AgentOrchestrator: Sendable {
             uniquingKeysWith: { first, _ in first }
         )
         self.toolTimeouts = toolTimeouts
+        self.policySettings = policySettings
+        self.longTermRules = longTermRules
     }
 
     func run(
@@ -43,6 +50,7 @@ struct AgentOrchestrator: Sendable {
         var modelTurns = 0
         var toolCallCount = 0
         var toolResults: [AgentToolResult] = []
+        var completedWriteFingerprints = Set<String>()
 
         do {
             while modelTurns < Self.maxModelTurns {
@@ -133,8 +141,7 @@ struct AgentOrchestrator: Sendable {
                             message: "模型请求执行工具，但没有提供工具调用。"
                         )
                     }
-                    guard decision.toolCalls.count <= Self.maxToolCallsPerTurn,
-                          toolCallCount + decision.toolCalls.count <= Self.maxToolCalls else {
+                    guard decision.toolCalls.count <= Self.maxToolCallsPerTurn else {
                         return budgetExhaustedRun(
                             runID: runID,
                             goal: goal,
@@ -148,17 +155,34 @@ struct AgentOrchestrator: Sendable {
                         decision.toolCalls,
                         priorResults: toolResults
                     )
+                    var writeFingerprintsByCallID: [String: String] = [:]
+                    var seenWriteFingerprints = completedWriteFingerprints
+                    callsToProcess = callsToProcess.filter { call in
+                        guard let fingerprint = writeFingerprint(for: call) else { return true }
+                        guard seenWriteFingerprints.insert(fingerprint).inserted else { return false }
+                        writeFingerprintsByCallID[call.callID] = fingerprint
+                        return true
+                    }
                     if callsToProcess.isEmpty {
                         let status = aggregateSuccessStatus(toolResults)
                         return AgentRunResult(
                             runID: runID,
                             goal: goal,
                             status: status,
-                            finalReply: nonempty(decision.assistantDraft) ?? "任务已经按要求创建好了。",
+                            finalReply: nonempty(decision.assistantDraft) ?? "任务已经按要求处理好了。",
                             modelTurns: modelTurns,
                             toolCallCount: toolCallCount,
                             toolResults: toolResults,
                             error: nil
+                        )
+                    }
+                    guard toolCallCount + callsToProcess.count <= Self.maxToolCalls else {
+                        return budgetExhaustedRun(
+                            runID: runID,
+                            goal: goal,
+                            modelTurns: modelTurns,
+                            toolCallCount: toolCallCount,
+                            toolResults: toolResults
                         )
                     }
                     let containsWrite = callsToProcess.contains { call in
@@ -219,7 +243,29 @@ struct AgentOrchestrator: Sendable {
 
                     if verifiedCalls.isEmpty { continue }
 
-                    if requiresLocalConfirmation(verifiedCalls) {
+                    switch executionPolicyDecision(for: verifiedCalls) {
+                    case .requireClarification:
+                        return AgentRunResult(
+                            runID: runID,
+                            goal: goal,
+                            status: .awaitingClarification,
+                            finalReply: "还需要确认具体任务或刷新任务状态后才能继续。",
+                            modelTurns: modelTurns,
+                            toolCallCount: toolCallCount,
+                            toolResults: toolResults,
+                            error: nil
+                        )
+                    case .reject:
+                        return failedRun(
+                            runID: runID,
+                            goal: goal,
+                            modelTurns: modelTurns,
+                            toolCallCount: toolCallCount,
+                            toolResults: toolResults,
+                            category: .invalidArguments,
+                            message: "这组操作未通过本地安全策略，请重新说明目标。"
+                        )
+                    case .requireConfirmation:
                         return AgentRunResult(
                             runID: runID,
                             goal: goal,
@@ -231,6 +277,8 @@ struct AgentOrchestrator: Sendable {
                             pendingToolCalls: verifiedCalls,
                             error: nil
                         )
+                    case .executeImmediately:
+                        break
                     }
 
                     let resultStartIndex = toolResults.count
@@ -239,6 +287,10 @@ struct AgentOrchestrator: Sendable {
                         toolCallCount += 1
                         let result = await executeOrSkip(call, runID: runID, priorResults: toolResults)
                         toolResults.append(result)
+                        if [.success, .unchanged, .alreadyApplied].contains(result.status),
+                           let fingerprint = writeFingerprintsByCallID[call.callID] {
+                            completedWriteFingerprints.insert(fingerprint)
+                        }
                     }
 
                     if let pendingApply = pendingScheduleApplication(
@@ -520,15 +572,66 @@ struct AgentOrchestrator: Sendable {
         return riskLevel == .readOnly ? toolTimeouts.readOnly : toolTimeouts.write
     }
 
-    private func requiresLocalConfirmation(_ calls: [AgentToolCall]) -> Bool {
-        let writes = calls.compactMap { call -> (AgentToolCall, AgentToolRiskLevel)? in
-            guard let executor = executors[call.tool], executor.riskLevel != .readOnly else { return nil }
-            return (call, executor.riskLevel)
+    private func executionPolicyDecision(
+        for calls: [AgentToolCall]
+    ) -> AgentExecutionPolicyDecision {
+        let writes = calls.filter { executors[$0.tool]?.riskLevel != .readOnly }
+        guard writes.isEmpty == false else { return .executeImmediately }
+
+        let decisions = writes.map { call -> AgentExecutionPolicyDecision in
+            // Unknown tools are not executable, but they must reach `execute` so the
+            // allowlist can return a structured unknown-tool result to the model.
+            guard let executor = executors[call.tool] else { return .executeImmediately }
+            let requiresTarget = [
+                AgentToolName.updateReminder,
+                .moveReminder,
+                .completeReminder,
+                .deleteReminder,
+                .applySchedule
+            ].contains(call.tool)
+            let hasStableTarget: Bool
+            let hasSnapshot: Bool
+            if call.tool == .applySchedule {
+                hasStableTarget = nonempty(stringValue(call.arguments["plan_id"])) != nil
+                hasSnapshot = hasStableTarget
+            } else if requiresTarget {
+                hasStableTarget = nonempty(stringValue(call.arguments["reminder_id"])) != nil
+                hasSnapshot = boolValue(call.arguments["must_exist"]) == true
+            } else {
+                hasStableTarget = true
+                hasSnapshot = true
+            }
+
+            return policyEvaluator.evaluate(
+                AgentExecutionPolicyInput(
+                    tool: call.tool,
+                    riskLevel: executor.riskLevel,
+                    writeOperationCount: writes.count,
+                    affectedItemCount: affectedItemCount(for: call, totalWrites: writes.count),
+                    hasUniqueStableTarget: hasStableTarget,
+                    hasPreconditionSnapshot: hasSnapshot,
+                    // Model-provided arguments are never proof of user confirmation.
+                    isExplicitlyConfirmed: false,
+                    settings: policySettings,
+                    longTermRules: longTermRules
+                )
+            )
         }
-        guard writes.isEmpty == false else { return false }
-        if writes.allSatisfy({ isExplicitlyConfirmed($0.0.arguments) }) { return false }
-        if writes.count > 1 { return true }
-        return writes.contains { $0.1 == .mediumRiskWrite || $0.1 == .highRiskWrite }
+
+        if decisions.contains(.reject) { return .reject }
+        if decisions.contains(.requireClarification) { return .requireClarification }
+        if decisions.contains(.requireConfirmation) { return .requireConfirmation }
+        return .executeImmediately
+    }
+
+    private func affectedItemCount(for call: AgentToolCall, totalWrites: Int) -> Int {
+        if case let .array(items)? = call.arguments["reminder_ids"], items.isEmpty == false {
+            return items.count
+        }
+        if call.tool == .applySchedule {
+            return max(2, totalWrites)
+        }
+        return 1
     }
 
     private func callsByAttachingReadSnapshots(
@@ -674,11 +777,6 @@ struct AgentOrchestrator: Sendable {
         return snapshots
     }
 
-    private func isExplicitlyConfirmed(_ arguments: AgentToolArguments) -> Bool {
-        guard case let .bool(confirmed)? = arguments["confirmed"] else { return false }
-        return confirmed
-    }
-
     private func argumentsByConfirming(_ arguments: AgentToolArguments) -> AgentToolArguments {
         var values = arguments.values
         values["confirmed"] = .bool(true)
@@ -818,6 +916,17 @@ struct AgentOrchestrator: Sendable {
     private func nonempty(_ value: String?) -> String? {
         let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed?.isEmpty == false ? trimmed : nil
+    }
+
+    private func writeFingerprint(for call: AgentToolCall) -> String? {
+        guard let executor = executors[call.tool], executor.riskLevel != .readOnly else { return nil }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(call.arguments),
+              let arguments = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return "\(call.tool.rawValue):\(arguments)"
     }
 
     private func readableMessage(for error: Error, fallback: String) -> String {

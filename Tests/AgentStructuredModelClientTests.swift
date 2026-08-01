@@ -10,7 +10,12 @@ final class AgentStructuredModelClientTests: XCTestCase {
             let decision = Self.decisionJSON(runID: runID)
             return (Self.chatEnvelope(decision), Self.httpResponse(for: request, status: 200))
         }
-        let client = makeClient(transport: transport)
+        let client = AgentStructuredModelClient(
+            configuration: configuration(),
+            transport: transport,
+            now: { Date(timeIntervalSince1970: 0) },
+            timeZone: TimeZone(identifier: "Asia/Shanghai")!
+        )
         let result = AgentToolResult(
             runID: runID,
             callID: "search-1",
@@ -147,6 +152,60 @@ final class AgentStructuredModelClientTests: XCTestCase {
             [AgentToolName.createList, AgentToolName.createReminder]
         )
         XCTAssertEqual(decision.toolCalls.last?.dependencyCallIDs, ["create-list"])
+    }
+
+    func testPlanPreviewFinalReplyIsRepairedIntoToolCalls() async throws {
+        let runID = runID
+        let invalidFinal = Self.jsonString([
+            "schema_version": 1,
+            "run_id": runID.uuidString,
+            "goal": "预览创建任务方案",
+            "phase": "final",
+            "assistant_draft": NSNull(),
+            "tool_calls": [],
+            "final_reply": "方案是明天创建任务，但暂不执行。"
+        ])
+        let repaired = Self.jsonString([
+            "schema_version": 1,
+            "run_id": runID.uuidString,
+            "goal": "预览创建任务方案",
+            "phase": "tool_calls",
+            "assistant_draft": "方案已准备好，请确认。",
+            "tool_calls": [[
+                "call_id": "create-preview",
+                "tool": "create_reminder",
+                "arguments": ["title": "预览任务"]
+            ]],
+            "final_reply": NSNull()
+        ])
+        let transport = SequencedModelTransport(responses: [
+            { request in
+                (Self.chatEnvelope(invalidFinal), Self.httpResponse(for: request, status: 200))
+            },
+            { request in
+                (Self.chatEnvelope(repaired), Self.httpResponse(for: request, status: 200))
+            }
+        ])
+        let client = AgentStructuredModelClient(
+            configuration: configuration(),
+            transport: transport,
+            now: { Date(timeIntervalSince1970: 0) },
+            timeZone: TimeZone(identifier: "Asia/Shanghai")!
+        )
+
+        let decision = try await client.decide(
+            AgentModelRequest(
+                runID: runID,
+                userInput: "[计划预览模式]\n先生成方案，不要执行",
+                modelTurn: 1,
+                toolResults: []
+            )
+        )
+
+        XCTAssertEqual(decision.phase, .toolCalls)
+        XCTAssertEqual(decision.toolCalls.map { $0.tool }, [AgentToolName.createReminder])
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 2)
     }
 
     func testResponsesAPIUsesResponsesShapeAndExtractsNestedOutputText() async throws {

@@ -134,7 +134,8 @@ struct AgentStructuredModelClient: AgentModelClient, Sendable {
         return try decodeDecision(
             decisionText,
             expectedRunID: modelRequest.runID,
-            contextSnapshot: modelRequest.contextSnapshot
+            contextSnapshot: modelRequest.contextSnapshot,
+            userInput: modelRequest.userInput
         )
     }
 
@@ -267,6 +268,8 @@ struct AgentStructuredModelClient: AgentModelClient, Sendable {
         顶层字段必须且只能是：schema_version、run_id、goal、phase、assistant_draft、tool_calls、final_reply。
         schema_version 必须为 1，run_id 必须原样复用输入。phase 仅允许 tool_calls、awaiting_clarification、awaiting_confirmation、final。
         phase=tool_calls 时 tool_calls 必须非空且 final_reply 必须为 null；phase=final 时 tool_calls 必须为空且 final_reply 必须是非空字符串。
+        不要直接使用 awaiting_confirmation：待确认状态由本地安全策略根据真实 tool_calls 生成。需要显示确认卡时必须返回 phase=tool_calls 和完整写操作。
+        当 user_input 含有“[计划预览模式]”或“[待确认方案修订模式]”时，禁止返回 phase=final 或空操作的 awaiting_confirmation；必须返回可执行的 tool_calls，目标不明确时则返回 awaiting_clarification。确认前本地不会执行写操作。
         每个工具调用必须包含唯一非空 call_id、tool 和 arguments。可选 depends_on 只能引用同一计划中更早的 call_id；前置调用失败时后续调用会被跳过。只能使用下列工具 schema：
         \(Self.toolSchemas)
         propose_schedule 必须在 items 中逐项提供 reminder_id 与 target_due_date；不能只传 reminder_ids、start_date 或 strategy，也不能提交空 items。用户指定了每项时间时必须原样映射到对应任务。
@@ -343,7 +346,8 @@ struct AgentStructuredModelClient: AgentModelClient, Sendable {
     private func decodeDecision(
         _ rawText: String,
         expectedRunID: UUID,
-        contextSnapshot: AgentContextSnapshot?
+        contextSnapshot: AgentContextSnapshot?,
+        userInput: String
     ) throws -> AgentModelDecision {
         let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.hasPrefix("{"), trimmed.hasSuffix("}"),
@@ -387,7 +391,7 @@ struct AgentStructuredModelClient: AgentModelClient, Sendable {
                 "模型决策字段不符合协议：\(error.localizedDescription)"
             )
         }
-        try validate(decision, expectedRunID: expectedRunID)
+        try validate(decision, expectedRunID: expectedRunID, userInput: userInput)
         return decision
     }
 
@@ -534,7 +538,11 @@ struct AgentStructuredModelClient: AgentModelClient, Sendable {
         }
     }
 
-    private func validate(_ decision: AgentModelDecision, expectedRunID: UUID) throws {
+    private func validate(
+        _ decision: AgentModelDecision,
+        expectedRunID: UUID,
+        userInput: String
+    ) throws {
         guard decision.schemaVersion == 1 else {
             throw AgentStructuredModelClientError.invalidDecision("模型决策 schema_version 必须为 1。")
         }
@@ -558,11 +566,20 @@ struct AgentStructuredModelClient: AgentModelClient, Sendable {
             guard decision.toolCalls.isEmpty, nonempty(decision.finalReply) != nil else {
                 throw AgentStructuredModelClientError.invalidDecision("final 阶段必须提供最终回复且不能包含工具调用。")
             }
-        case .awaitingClarification, .awaitingConfirmation:
+            if userInput.contains("[计划预览模式]") || userInput.contains("[待确认方案修订模式]") {
+                throw AgentStructuredModelClientError.invalidDecision(
+                    "方案预览或修订不能只返回文字，必须提供 tool_calls；目标不明确时请请求澄清。"
+                )
+            }
+        case .awaitingClarification:
             guard decision.toolCalls.isEmpty,
                   nonempty(decision.assistantDraft) != nil || nonempty(decision.finalReply) != nil else {
                 throw AgentStructuredModelClientError.invalidDecision("等待阶段必须提供用户可见提示且不能包含工具调用。")
             }
+        case .awaitingConfirmation:
+            throw AgentStructuredModelClientError.invalidDecision(
+                "模型不能直接声明等待确认，必须提供 tool_calls 交给本地安全策略生成确认状态。"
+            )
         }
     }
 

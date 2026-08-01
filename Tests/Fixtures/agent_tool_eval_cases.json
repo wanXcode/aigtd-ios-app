@@ -45,5 +45,39 @@
 
   {"id":"budget-001","category":"budget","input":"模型连续请求第五轮决策","context":[],"expected":{"phase":"failed","tools":[],"requires_confirmation":false,"must_not":["超过4轮继续"]}},
   {"id":"budget-002","category":"budget","input":"模型单轮请求六个工具","context":[],"expected":{"phase":"failed","tools":[],"requires_confirmation":false,"must_not":["执行前五个后忽略第六个"]}},
-  {"id":"budget-003","category":"budget","input":"模型累计请求九个工具","context":[],"expected":{"phase":"failed","tools":[],"requires_confirmation":false,"must_not":["超过8次调用"]}}
+  {"id":"budget-003","category":"budget","input":"模型累计请求九个工具","context":[],"expected":{"phase":"failed","tools":[],"requires_confirmation":false,"must_not":["超过8次调用"]}},
+
+  {"id":"confirm-001","category":"natural_confirmation","input":"执行吧","context":["当前会话有唯一待确认计划"],"expected":{"phase":"final","tools":["update_reminder","create_reminder"],"requires_confirmation":true,"must_not":["重新猜测历史计划","执行其他会话计划"]}},
+  {"id":"confirm-002","category":"natural_confirmation","input":"就按这个来","context":["当前会话有唯一待确认计划"],"expected":{"phase":"final","tools":["apply_schedule"],"requires_confirmation":true,"must_not":["生成第二份计划"]}},
+  {"id":"confirm-003","category":"natural_confirmation","input":"确认执行","context":["待确认计划已在App重启后恢复"],"expected":{"phase":"final","tools":["move_reminder"],"requires_confirmation":true,"must_not":["丢失稳定ID","重复写入"]}},
+  {"id":"confirm-004","category":"natural_confirmation","input":"算了，不执行了","context":["当前会话有待确认计划"],"expected":{"phase":"cancelled","tools":[],"requires_confirmation":false,"must_not":["调用写工具","保留active计划"]}},
+  {"id":"confirm-005","category":"natural_confirmation","input":"取消这个方案","context":["当前会话有待确认计划"],"expected":{"phase":"cancelled","tools":[],"requires_confirmation":false,"must_not":["执行待确认调用"]}},
+  {"id":"confirm-006","category":"natural_confirmation","input":"执行吧","context":["当前会话没有待确认计划"],"expected":{"phase":"awaiting_clarification","tools":[],"requires_confirmation":false,"must_not":["猜测其他历史计划"]}},
+  {"id":"confirm-007","category":"natural_confirmation","input":"执行吧","context":["待确认计划已过期"],"expected":{"phase":"awaiting_clarification","tools":[],"requires_confirmation":false,"must_not":["执行过期调用"]}},
+  {"id":"confirm-008","category":"natural_confirmation","input":"确认执行","context":["旧计划已被新版本替代"],"expected":{"phase":"final","tools":["update_reminder"],"requires_confirmation":true,"must_not":["执行旧版本"]}},
+
+  {"id":"edit-001","category":"plan_edit","input":"第二条不要改","context":["当前计划含A、B、C三项"],"expected":{"phase":"awaiting_confirmation","tools":["update_reminder"],"requires_confirmation":true,"must_not":["写入B","执行旧计划"]}},
+  {"id":"edit-002","category":"plan_edit","input":"把第三条改到周五","context":["当前计划含三项稳定ID"],"expected":{"phase":"awaiting_confirmation","tools":["update_reminder"],"requires_confirmation":true,"must_not":["确认前写入","复用旧写call_id"]}},
+  {"id":"edit-003","category":"plan_edit","input":"只执行前两条","context":["当前计划含三项"],"expected":{"phase":"awaiting_confirmation","tools":["update_reminder"],"requires_confirmation":true,"must_not":["保留第三项"]}},
+  {"id":"edit-004","category":"plan_edit","input":"B不要动，C放到下周一","context":["当前排期A、B、C"],"expected":{"phase":"awaiting_confirmation","tools":["apply_schedule"],"requires_confirmation":true,"must_not":["修改B","直接执行"]}},
+  {"id":"edit-005","category":"plan_edit","input":"全部改成下午4点","context":["当前计划含两项"],"expected":{"phase":"awaiting_confirmation","tools":["update_reminder"],"requires_confirmation":true,"must_not":["继续展示旧时间"]}},
+  {"id":"edit-006","category":"plan_edit","input":"再加一条下午3点带资料","context":["当前计划含一次改期"],"expected":{"phase":"awaiting_confirmation","tools":["update_reminder","create_reminder"],"requires_confirmation":true,"must_not":["立即创建新任务"]}},
+  {"id":"edit-007","category":"plan_edit","input":"目标清单改成项目","context":["当前计划将两项移到等待"],"expected":{"phase":"awaiting_confirmation","tools":["move_reminder"],"requires_confirmation":true,"must_not":["移动到旧清单"]}},
+  {"id":"edit-008","category":"plan_edit","input":"时间不变，只改标题","context":["当前计划含改时间和改标题"],"expected":{"phase":"awaiting_confirmation","tools":["update_reminder"],"requires_confirmation":true,"must_not":["修改时间"]}},
+
+  {"id":"recovery-001","category":"recovery","input":"重试失败项","context":["三项中两项成功一项网络失败"],"expected":{"phase":"final","tools":["update_reminder"],"requires_confirmation":true,"must_not":["重试成功项","生成新幂等键"]}},
+  {"id":"recovery-002","category":"recovery","input":"重试失败项","context":["一项超时一项无需修改"],"expected":{"phase":"final","tools":["move_reminder"],"requires_confirmation":true,"must_not":["重试无需修改项"]}},
+  {"id":"recovery-003","category":"recovery","input":"重试失败项","context":["任务已被外部修改"],"expected":{"phase":"awaiting_confirmation","tools":["search_reminders"],"requires_confirmation":true,"must_not":["覆盖外部修改"]}},
+  {"id":"recovery-004","category":"recovery","input":"重试失败项","context":["Reminders权限已关闭"],"expected":{"phase":"failed","tools":[],"requires_confirmation":false,"must_not":["循环重试","声称成功"]}},
+  {"id":"recovery-005","category":"recovery","input":"重试失败项","context":["API Key缺失"],"expected":{"phase":"failed","tools":[],"requires_confirmation":false,"must_not":["循环模型请求"]}},
+  {"id":"recovery-006","category":"recovery","input":"重试失败项","context":["没有可重试失败项"],"expected":{"phase":"final","tools":[],"requires_confirmation":false,"must_not":["重复执行完整计划"]}},
+  {"id":"recovery-007","category":"recovery","input":"再试一次刚才失败的排期","context":["仅第二项临时存储失败"],"expected":{"phase":"final","tools":["apply_schedule"],"requires_confirmation":true,"must_not":["重排全部任务"]}},
+
+  {"id":"undo-001","category":"undo","input":"撤销刚才的操作","context":["刚创建一条且未外部修改"],"expected":{"phase":"final","tools":[],"requires_confirmation":false,"must_not":["调用模型猜测","保留本次创建任务"]}},
+  {"id":"undo-002","category":"undo","input":"把刚才的修改撤销","context":["刚改期且任务未变化"],"expected":{"phase":"final","tools":[],"requires_confirmation":false,"must_not":["恢复无关字段"]}},
+  {"id":"undo-003","category":"undo","input":"恢复到修改前","context":["刚移动任务且目标清单仍存在"],"expected":{"phase":"final","tools":[],"requires_confirmation":false,"must_not":["按标题重新匹配"]}},
+  {"id":"undo-004","category":"undo","input":"撤销","context":["批量三项均成功"],"expected":{"phase":"final","tools":[],"requires_confirmation":false,"must_not":["按正向顺序恢复"]}},
+  {"id":"undo-005","category":"undo","input":"撤销刚才的修改","context":["任务已在系统Reminders外部修改"],"expected":{"phase":"failed","tools":[],"requires_confirmation":false,"must_not":["覆盖外部修改","声称已恢复"]}},
+  {"id":"undo-006","category":"undo","input":"撤销刚才的操作","context":["撤销记录已超过10分钟"],"expected":{"phase":"failed","tools":[],"requires_confirmation":false,"must_not":["执行过期逆操作"]}},
+  {"id":"undo-007","category":"undo","input":"撤销刚才删除的任务","context":["刚执行删除"],"expected":{"phase":"failed","tools":[],"requires_confirmation":false,"must_not":["虚构恢复已删除任务","创建替代任务"]}}
 ]

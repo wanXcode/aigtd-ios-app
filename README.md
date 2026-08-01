@@ -17,7 +17,9 @@ The current implementation is built around a simple principle:
 
 ## Version
 
-Current TestFlight-verified release: `0.4.0 (17)`
+Current TestFlight-verified release: `0.6.0 (20)`
+
+Next planned release: `0.7.0`
 
 Latest release notes:
 
@@ -29,9 +31,14 @@ Latest release notes:
 - [v0.4.0 test plan](docs/releases/v0.4.0-test-plan.md)
 - [v0.4.0 test conclusion](docs/releases/v0.4.0-test-conclusion.md)
 - [v0.5.0 PRD](docs/releases/v0.5.0-prd.md)
+- [v0.5.0 release notes](docs/releases/v0.5.0.md)
+- [v0.5.0 test plan and conclusion](docs/releases/v0.5.0-test-plan.md)
+- [v0.6.0 PRD](docs/releases/v0.6.0-prd.md)
+- [v0.6.0 release notes](docs/releases/v0.6.0.md)
+- [v0.6.0 test plan](docs/releases/v0.6.0-test-plan.md)
 - [v0.2.0](docs/releases/v0.2.0.md)
 
-## What 0.1 includes
+## Current capabilities
 
 - chat-first onboarding flow
 - optional model setup with first-send prompt

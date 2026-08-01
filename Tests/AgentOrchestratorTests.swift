@@ -112,6 +112,81 @@ final class AgentOrchestratorTests: XCTestCase {
         XCTAssertEqual(updateCount, 0)
     }
 
+    func testExecutesSemanticallyRepeatedCreateOnlyOnceAcrossModelTurns() async {
+        let runID = UUID()
+        let arguments = AgentToolArguments([
+            "title": .string("0.6 撤销创建"),
+            "due_date": .string("2026-08-03T08:00:00Z"),
+            "includes_time": .bool(true)
+        ])
+        let model = ScriptedModelClient([
+            .init(
+                runID: runID,
+                goal: "创建提醒",
+                phase: .toolCalls,
+                toolCalls: [.init(callID: "create-1", tool: .createReminder, arguments: arguments)]
+            ),
+            .init(
+                runID: runID,
+                goal: "创建提醒",
+                phase: .toolCalls,
+                assistantDraft: "已经记好了。",
+                toolCalls: [.init(callID: "create-2", tool: .createReminder, arguments: arguments)]
+            )
+        ])
+        let executor = RecordingToolExecutor(
+            toolName: .createReminder,
+            riskLevel: .lowRiskWrite,
+            output: .init(result: .init(["reminder_id": .string("created-id")]))
+        )
+
+        let result = await AgentOrchestrator(
+            modelClient: model,
+            toolExecutors: [executor]
+        ).run(userInput: "明天下午 4 点提醒我 0.6 撤销创建", runID: runID)
+
+        let executionCount = await executor.executionCount()
+        let requests = await model.recordedRequests()
+        XCTAssertEqual(result.status, .succeeded)
+        XCTAssertEqual(result.finalReply, "已经记好了。")
+        XCTAssertEqual(result.toolCallCount, 1)
+        XCTAssertEqual(result.toolResults.map(\.tool), [.createReminder])
+        XCTAssertEqual(executionCount, 1)
+        XCTAssertEqual(requests.count, 2)
+    }
+
+    func testExecutesDuplicateCreatesOnlyOnceWithinOneModelTurn() async {
+        let runID = UUID()
+        let arguments = AgentToolArguments(["title": .string("重复创建")])
+        let model = ScriptedModelClient([
+            .init(
+                runID: runID,
+                goal: "创建提醒",
+                phase: .toolCalls,
+                toolCalls: [
+                    .init(callID: "create-1", tool: .createReminder, arguments: arguments),
+                    .init(callID: "create-2", tool: .createReminder, arguments: arguments)
+                ]
+            ),
+            .init(runID: runID, goal: "创建提醒", phase: .final, finalReply: "已经记好了。")
+        ])
+        let executor = RecordingToolExecutor(
+            toolName: .createReminder,
+            riskLevel: .lowRiskWrite,
+            output: .init(result: .init(["reminder_id": .string("created-id")]))
+        )
+
+        let result = await AgentOrchestrator(
+            modelClient: model,
+            toolExecutors: [executor]
+        ).run(userInput: "创建一条提醒", runID: runID)
+
+        let executionCount = await executor.executionCount()
+        XCTAssertEqual(result.status, .succeeded)
+        XCTAssertEqual(result.toolCallCount, 1)
+        XCTAssertEqual(executionCount, 1)
+    }
+
     func testStopsWhenModelTurnBudgetIsExhausted() async {
         let runID = UUID()
         let calls = (1...AgentOrchestrator.maxModelTurns).map { index in
@@ -355,26 +430,35 @@ final class AgentOrchestratorTests: XCTestCase {
     func testMultipleWritesRequireLocalConfirmationWithoutExecution() async {
         let runID = UUID()
         let calls = [
-            AgentToolCall(callID: "one", tool: .updateReminder),
-            AgentToolCall(callID: "two", tool: .completeReminder)
+            AgentToolCall(
+                callID: "one",
+                tool: .createReminder,
+                arguments: .init([
+                    "title": .string("第一项")
+                ])
+            ),
+            AgentToolCall(
+                callID: "two",
+                tool: .createReminder,
+                arguments: .init([
+                    "title": .string("第二项")
+                ])
+            )
         ]
         let model = ScriptedModelClient([
             .init(runID: runID, goal: "批量修改", phase: .toolCalls, toolCalls: calls)
         ])
-        let update = RecordingToolExecutor(toolName: .updateReminder, riskLevel: .lowRiskWrite)
-        let complete = RecordingToolExecutor(toolName: .completeReminder, riskLevel: .lowRiskWrite)
+        let create = RecordingToolExecutor(toolName: .createReminder, riskLevel: .lowRiskWrite)
 
         let result = await AgentOrchestrator(
             modelClient: model,
-            toolExecutors: [update, complete]
+            toolExecutors: [create]
         ).run(userInput: "修改两项", runID: runID)
 
-        let updateCount = await update.executionCount()
-        let completeCount = await complete.executionCount()
+        let createCount = await create.executionCount()
         XCTAssertEqual(result.status, .awaitingConfirmation)
         XCTAssertEqual(result.pendingToolCalls, calls)
-        XCTAssertEqual(updateCount, 0)
-        XCTAssertEqual(completeCount, 0)
+        XCTAssertEqual(createCount, 0)
     }
 
     func testPendingWritesUseLocalReadSnapshotsInsteadOfModelPreconditions() async throws {
@@ -613,7 +697,11 @@ final class AgentOrchestratorTests: XCTestCase {
 
     func testSingleMediumRiskWriteRequiresConfirmation() async {
         let runID = UUID()
-        let call = AgentToolCall(callID: "apply", tool: .applySchedule)
+        let call = AgentToolCall(
+            callID: "apply",
+            tool: .applySchedule,
+            arguments: .init(["plan_id": .string("plan-1")])
+        )
         let model = ScriptedModelClient([
             .init(runID: runID, goal: "应用方案", phase: .toolCalls, toolCalls: [call])
         ])
@@ -623,6 +711,31 @@ final class AgentOrchestratorTests: XCTestCase {
             modelClient: model,
             toolExecutors: [executor]
         ).run(userInput: "应用", runID: runID)
+
+        let executionCount = await executor.executionCount()
+        XCTAssertEqual(result.status, .awaitingConfirmation)
+        XCTAssertEqual(executionCount, 0)
+    }
+
+    func testModelCannotBypassConfirmationWithConfirmedArgument() async {
+        let runID = UUID()
+        let call = AgentToolCall(
+            callID: "create-list",
+            tool: .createList,
+            arguments: .init([
+                "title": .string("发布"),
+                "confirmed": .bool(true)
+            ])
+        )
+        let model = ScriptedModelClient([
+            .init(runID: runID, goal: "创建清单", phase: .toolCalls, toolCalls: [call])
+        ])
+        let executor = RecordingToolExecutor(toolName: .createList, riskLevel: .mediumRiskWrite)
+
+        let result = await AgentOrchestrator(
+            modelClient: model,
+            toolExecutors: [executor]
+        ).run(userInput: "创建发布清单", runID: runID)
 
         let executionCount = await executor.executionCount()
         XCTAssertEqual(result.status, .awaitingConfirmation)

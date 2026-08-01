@@ -10,13 +10,17 @@ final class AgentToolEvaluationFixtureTests: XCTestCase {
         "partial_failure": 4,
         "chat": 4,
         "protocol_error": 3,
-        "budget": 3
+        "budget": 3,
+        "natural_confirmation": 8,
+        "plan_edit": 8,
+        "recovery": 7,
+        "undo": 7
     ]
 
-    func testFixtureHasFortyUniqueCasesWithRequiredDistribution() throws {
+    func testFixtureHasSeventyUniqueCasesWithRequiredDistribution() throws {
         let cases = try loadCases()
-        XCTAssertEqual(cases.count, 40)
-        XCTAssertEqual(Set(cases.map(\.id)).count, 40)
+        XCTAssertEqual(cases.count, 70)
+        XCTAssertEqual(Set(cases.map(\.id)).count, 70)
         XCTAssertEqual(Dictionary(grouping: cases, by: \.category).mapValues(\.count), Self.expectedCounts)
     }
 
@@ -27,7 +31,10 @@ final class AgentToolEvaluationFixtureTests: XCTestCase {
             XCTAssertFalse(item.expected.mustNot.isEmpty, item.id)
             XCTAssertEqual(Set(item.expected.tools).count, item.expected.tools.count, "\(item.id) 重复声明工具")
             if item.expected.requiresConfirmation {
-                let batchCategory = ["multi_write", "dependency", "partial_failure"].contains(item.category)
+                let batchCategory = [
+                    "multi_write", "dependency", "partial_failure", "natural_confirmation",
+                    "plan_edit", "recovery"
+                ].contains(item.category)
                 XCTAssertTrue(
                     batchCategory || item.expected.tools.count > 1
                         || item.expected.tools.contains("delete_reminder")

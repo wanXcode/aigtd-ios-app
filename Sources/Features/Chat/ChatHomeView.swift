@@ -13,6 +13,7 @@ struct ChatHomeView: View {
     @Query(sort: \ModelProfile.displayName) private var modelProfiles: [ModelProfile]
     @Query(sort: \AgentDocument.updatedAt, order: .forward) private var agentDocuments: [AgentDocument]
     @Query private var preferences: [UserPreference]
+    @Query private var executionPolicies: [ExecutionPolicy]
     @State private var draft = ""
     @State private var isSending = false
     @State private var isStreamingReply = false
@@ -59,7 +60,9 @@ struct ChatHomeView: View {
                             ChatMessageRow(
                                 message: message,
                                 actionLog: latestActionLogByMessageID[message.id],
-                                onPrimaryAction: handleCardPrimaryAction
+                                onPrimaryAction: handleCardPrimaryAction,
+                                onAdjustAction: handleCardAdjustAction,
+                                onCancelAction: handleCardCancelAction
                             )
                             .id(message.id)
                         }
@@ -81,6 +84,7 @@ struct ChatHomeView: View {
             .scrollDismissesKeyboard(.interactively)
             .scrollIndicators(.hidden)
             .onAppear {
+                reconcileInterruptedStructuredLogs()
                 scrollToLatestMessage(using: proxy, animated: false)
             }
             .onChange(of: activeMessages.count) { _, _ in
@@ -359,6 +363,14 @@ struct ChatHomeView: View {
             session = created
         }
 
+        if await handleUndoCommand(content, session: session) {
+            return
+        }
+        if await handlePendingInteractionCommand(content, session: session) {
+            return
+        }
+        let pendingRevision = activePendingPresentation(for: session.id)?.confirmationPayload
+
         let userMessage = ChatMessage(
             sessionID: session.id,
             role: "user",
@@ -436,7 +448,13 @@ struct ChatHomeView: View {
             let presentation = await conversationCoordinator.run(
                 userInput: content,
                 configuration: configuration,
-                contextSnapshot: contextSnapshot
+                contextSnapshot: contextSnapshot,
+                sessionID: session.id,
+                policySettings: executionPolicies.first.map { AgentExecutionPolicySettings(policy: $0) } ?? .init(),
+                longTermRules: AgentExecutionPolicyLongTermRules(
+                    memoryItems: AgentUserMemoryStore.shared.items()
+                ),
+                revisionOf: pendingRevision
             )
             if presentation.allowsLegacyFallback == false {
                 await finalizeStructuredPresentation(
@@ -670,6 +688,174 @@ struct ChatHomeView: View {
     }
 
     @MainActor
+    private func handleUndoCommand(
+        _ content: String,
+        session: ChatSession
+    ) async -> Bool {
+        guard AgentUndoCommandParser().matches(content) else { return false }
+
+        let userMessage = ChatMessage(sessionID: session.id, role: "user", text: content)
+        let assistantMessage = ChatMessage(
+            sessionID: session.id,
+            role: "assistant",
+            text: "",
+            status: "streaming"
+        )
+        modelContext.insert(userMessage)
+        modelContext.insert(assistantMessage)
+
+        let candidate = actionLogs.reversed().compactMap { log -> (ActionLog, AgentConversationPresentation)? in
+            guard log.sessionID == session.id,
+                  log.actionType == "agent_run",
+                  ["success", "partial"].contains(log.executionStatus),
+                  let presentation = structuredPresentation(from: log),
+                  AgentUndoRecordStore.shared.record(
+                    forwardRunID: presentation.result.runID
+                  )?.status == .available else {
+                return nil
+            }
+            return (log, presentation)
+        }.first
+
+        if let (log, presentation) = candidate {
+            await undoStructuredRun(log, presentation: presentation)
+            switch log.executionStatus {
+            case "undone":
+                assistantMessage.text = "已经恢复到刚才操作之前的状态。"
+            case "undo_conflict":
+                assistantMessage.text = "任务后来发生了变化，我没有覆盖你在 Reminders 中的新修改。"
+            case "undo_partial":
+                assistantMessage.text = "部分操作已经恢复，另一些项目没有处理。"
+            default:
+                assistantMessage.text = log.errorMessage.nonEmpty ?? "这次撤销没有完成。"
+            }
+        } else {
+            assistantMessage.text = "当前没有可以撤销的操作。"
+        }
+
+        assistantMessage.status = "sent"
+        session.updatedAt = .now
+        session.lastMessagePreview = content
+        try? modelContext.save()
+        return true
+    }
+
+    @MainActor
+    private func handlePendingInteractionCommand(
+        _ content: String,
+        session: ChatSession
+    ) async -> Bool {
+        let command = AgentPendingInteractionCommandParser().parse(content)
+        guard command != .none else { return false }
+
+        let userMessage = ChatMessage(sessionID: session.id, role: "user", text: content)
+        let assistantMessage = ChatMessage(
+            sessionID: session.id,
+            role: "assistant",
+            text: "",
+            status: "streaming"
+        )
+        modelContext.insert(userMessage)
+        modelContext.insert(assistantMessage)
+
+        guard let active = AgentPendingInteractionStore.shared.active(for: session.id),
+              let log = actionLogs.reversed().first(where: { log in
+                  guard log.sessionID == session.id,
+                        log.actionType == "agent_run",
+                        log.executionStatus == "awaiting_confirmation",
+                        let data = log.payloadJSON.data(using: .utf8),
+                        let presentation = try? JSONDecoder().decode(
+                            AgentConversationPresentation.self,
+                            from: data
+                        ) else { return false }
+                  return presentation.confirmationPayload?.interactionID == active.interactionID
+              }),
+              let data = log.payloadJSON.data(using: .utf8),
+              let pending = try? JSONDecoder().decode(AgentConversationPresentation.self, from: data) else {
+            assistantMessage.text = "当前没有等待确认的方案。"
+            assistantMessage.status = "sent"
+            session.updatedAt = .now
+            session.lastMessagePreview = content
+            try? modelContext.save()
+            return true
+        }
+
+        let completed: AgentConversationPresentation?
+        switch command {
+        case .confirm:
+            completed = await executeStructuredRun(log, pending: pending, updatesOriginalMessage: false)
+        case .cancel:
+            let cancelled = conversationCoordinator.cancel(pending)
+            applyStructuredPresentation(cancelled, to: log, updatesOriginalMessage: false)
+            completed = cancelled
+        case .none:
+            completed = nil
+        }
+
+        assistantMessage.text = completed?.reply ?? "这份方案已经失效，请重新生成。"
+        assistantMessage.status = "sent"
+        session.updatedAt = .now
+        session.lastMessagePreview = content
+        try? modelContext.save()
+        return true
+    }
+
+    private func activePendingPresentation(
+        for sessionID: UUID
+    ) -> AgentConversationPresentation? {
+        guard let active = AgentPendingInteractionStore.shared.active(for: sessionID) else {
+            return nil
+        }
+        return actionLogs.reversed().compactMap { log -> AgentConversationPresentation? in
+            guard log.sessionID == sessionID,
+                  log.actionType == "agent_run",
+                  log.executionStatus == "awaiting_confirmation",
+                  let data = log.payloadJSON.data(using: .utf8),
+                  let presentation = try? JSONDecoder().decode(
+                      AgentConversationPresentation.self,
+                      from: data
+                  ),
+                  presentation.confirmationPayload?.interactionID == active.interactionID else {
+                return nil
+            }
+            return presentation
+        }.first
+    }
+
+    private func reconcileInterruptedStructuredLogs() {
+        let successful: Set<AgentToolExecutionStatus> = [.success, .unchanged, .alreadyApplied]
+        let terminal: Set<AgentToolExecutionStatus> = successful.union([.failed, .skipped, .cancelled, .timedOut])
+        var changed = false
+
+        for log in actionLogs where log.actionType == "agent_run" && log.executionStatus == "pending" {
+            guard let presentation = structuredPresentation(from: log) else { continue }
+            let writeResults = presentation.result.toolResults.filter { isWriteTool($0.tool) }
+            guard writeResults.isEmpty == false,
+                  writeResults.allSatisfy({ terminal.contains($0.status) }) else { continue }
+
+            let successCount = writeResults.filter { successful.contains($0.status) }.count
+            let failureCount = writeResults.count - successCount
+            if failureCount == 0 {
+                log.executionStatus = "success"
+                log.errorMessage = ""
+            } else if successCount > 0 {
+                log.executionStatus = "partial"
+                log.errorMessage = "部分操作没有完成，请核对 Reminders 中的实际结果。"
+            } else {
+                log.executionStatus = "failed"
+                log.errorMessage = presentation.result.error?.userVisibleMessage
+                    ?? "上次操作没有完成，请核对 Reminders 中的实际结果。"
+            }
+            log.executedAt = log.executedAt ?? .now
+            changed = true
+        }
+
+        if changed {
+            try? modelContext.save()
+        }
+    }
+
+    @MainActor
     private func finalizeStructuredPresentation(
         _ presentation: AgentConversationPresentation,
         assistantMessage: ChatMessage,
@@ -683,6 +869,23 @@ struct ChatHomeView: View {
         let writeResults = presentation.result.toolResults.filter { isWriteTool($0.tool) }
         let pendingWrites = presentation.result.pendingToolCalls.filter { isWriteTool($0.tool) }
         if writeResults.isEmpty == false || pendingWrites.isEmpty == false {
+            if presentation.result.status == .awaitingConfirmation,
+               let currentInteractionID = presentation.confirmationPayload?.interactionID {
+                for existingLog in actionLogs where
+                    existingLog.sessionID == session.id &&
+                    existingLog.actionType == "agent_run" &&
+                    existingLog.executionStatus == "awaiting_confirmation" {
+                    let existingPresentation = existingLog.payloadJSON.data(using: .utf8)
+                        .flatMap {
+                            try? JSONDecoder().decode(AgentConversationPresentation.self, from: $0)
+                        }
+                    let existingInteractionID = existingPresentation?.confirmationPayload?.interactionID
+                    if existingInteractionID != currentInteractionID {
+                        existingLog.executionStatus = "cancelled"
+                        existingLog.errorMessage = "已被新方案替代"
+                    }
+                }
+            }
             let summary = structuredSummary(for: presentation.result)
             assistantMessage.actionResultSummary = summary
             if let data = try? JSONEncoder().encode(presentation) {
@@ -2333,6 +2536,15 @@ struct ChatHomeView: View {
         case "agent_run":
             if log.executionStatus == "awaiting_confirmation" {
                 Task { await confirmStructuredRun(log) }
+            } else if let presentation = structuredPresentation(from: log),
+                      AgentRecoveryPlanner().makePlan(from: presentation.result.toolResults)
+                        .hasRetryableFailures {
+                Task { await retryStructuredRun(log, presentation: presentation) }
+            } else if let presentation = structuredPresentation(from: log),
+                      AgentUndoRecordStore.shared.record(
+                        forwardRunID: presentation.result.runID
+                      )?.status == .available {
+                Task { await undoStructuredRun(log, presentation: presentation) }
             } else {
                 appModel.selectedTab = .reminders
             }
@@ -2347,14 +2559,49 @@ struct ChatHomeView: View {
         }
     }
 
+    private func handleCardAdjustAction(_ log: ActionLog) {
+        guard log.actionType == "agent_run",
+              log.executionStatus == "awaiting_confirmation" else { return }
+        if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            draft = "请把这份方案调整为："
+        }
+        isComposerFocused = true
+        composerFocusRequestID = UUID()
+        DispatchQueue.main.async {
+            composerFocusBridge.focus()
+        }
+    }
+
+    private func handleCardCancelAction(_ log: ActionLog) {
+        guard log.actionType == "agent_run",
+              log.executionStatus == "awaiting_confirmation",
+              let data = log.payloadJSON.data(using: .utf8),
+              let pending = try? JSONDecoder().decode(AgentConversationPresentation.self, from: data) else {
+            return
+        }
+        let cancelled = conversationCoordinator.cancel(pending)
+        applyStructuredPresentation(cancelled, to: log, updatesOriginalMessage: true)
+    }
+
     @MainActor
     private func confirmStructuredRun(_ log: ActionLog) async {
         guard log.executionStatus == "awaiting_confirmation",
               let data = log.payloadJSON.data(using: .utf8),
-              let pending = try? JSONDecoder().decode(AgentConversationPresentation.self, from: data),
-              executingActionIDs.insert(log.id).inserted else {
+              let pending = try? JSONDecoder().decode(AgentConversationPresentation.self, from: data) else {
             return
         }
+
+        _ = await executeStructuredRun(log, pending: pending, updatesOriginalMessage: true)
+    }
+
+    @MainActor
+    private func executeStructuredRun(
+        _ log: ActionLog,
+        pending: AgentConversationPresentation,
+        updatesOriginalMessage: Bool
+    ) async -> AgentConversationPresentation? {
+        guard log.executionStatus == "awaiting_confirmation",
+              executingActionIDs.insert(log.id).inserted else { return nil }
         defer { executingActionIDs.remove(log.id) }
 
         log.executionStatus = "pending"
@@ -2365,24 +2612,144 @@ struct ChatHomeView: View {
             pending,
             configuration: activeModelConfiguration
         )
+        applyStructuredPresentation(
+            completed,
+            to: log,
+            updatesOriginalMessage: updatesOriginalMessage
+        )
+        if completed.result.toolResults.contains(where: {
+            isWriteTool($0.tool) && [.success, .unchanged, .alreadyApplied].contains($0.status)
+        }) {
+            await appModel.refreshReminderLists()
+        }
+        return completed
+    }
+
+    @MainActor
+    private func retryStructuredRun(
+        _ log: ActionLog,
+        presentation: AgentConversationPresentation
+    ) async {
+        guard ["partial", "failed"].contains(log.executionStatus),
+              executingActionIDs.insert(log.id).inserted else { return }
+        defer { executingActionIDs.remove(log.id) }
+
+        log.executionStatus = "pending"
+        log.errorMessage = ""
+        try? modelContext.save()
+
+        let completed = await conversationCoordinator.retryFailed(
+            presentation,
+            configuration: activeModelConfiguration
+        )
+        applyStructuredPresentation(completed, to: log, updatesOriginalMessage: true)
+        if completed.result.toolResults.contains(where: {
+            isWriteTool($0.tool) && [.success, .unchanged, .alreadyApplied].contains($0.status)
+        }) {
+            await appModel.refreshReminderLists()
+        }
+    }
+
+    @MainActor
+    private func undoStructuredRun(
+        _ log: ActionLog,
+        presentation: AgentConversationPresentation
+    ) async {
+        guard ["success", "partial"].contains(log.executionStatus),
+              let record = AgentUndoRecordStore.shared.record(
+                forwardRunID: presentation.result.runID
+              ),
+              record.status == .available,
+              executingActionIDs.insert(log.id).inserted else { return }
+        defer { executingActionIDs.remove(log.id) }
+
+        log.executionStatus = "pending"
+        log.errorMessage = ""
+        try? modelContext.save()
+
+        do {
+            let executor = AgentUndoExecutor(
+                gateway: EventKitReminderStoreGateway(),
+                writer: EventKitReminderToolWriter(),
+                store: .shared
+            )
+            let result = try await executor.execute(recordID: record.id)
+            switch result.record.status {
+            case .undone:
+                log.executionStatus = "undone"
+                log.errorMessage = ""
+            case .conflict:
+                log.executionStatus = "undo_conflict"
+                log.errorMessage = "任务已发生变化，未覆盖 Reminders 中的新内容。"
+            case .partiallyFailed:
+                log.executionStatus = "undo_partial"
+                log.errorMessage = "部分操作未能恢复，请查看 Reminders 中的实际结果。"
+            default:
+                log.executionStatus = "undo_failed"
+                log.errorMessage = "这次撤销没有完成。"
+            }
+            if let messageID = log.messageID,
+               let assistantMessage = messages.first(where: { $0.id == messageID }) {
+                assistantMessage.text = undoReply(for: result.record)
+                assistantMessage.actionResultSummary = undoSummary(for: result.record)
+            }
+        } catch AgentUndoRecordStoreError.unavailable(.expired) {
+            log.executionStatus = "undo_failed"
+            log.errorMessage = "撤销时间已超过 10 分钟。"
+        } catch {
+            log.executionStatus = "undo_failed"
+            log.errorMessage = "这次撤销没有完成，请查看 Reminders 中的实际状态。"
+        }
+        log.executedAt = .now
+        try? modelContext.save()
+        await appModel.refreshReminderLists()
+    }
+
+    private func undoReply(for record: AgentUndoRecord) -> String {
+        switch record.status {
+        case .undone:
+            return "已经恢复到这次操作之前的状态。"
+        case .conflict:
+            return "任务后来发生了变化，我没有覆盖你在 Reminders 中的新修改。"
+        case .partiallyFailed:
+            return "部分操作已经恢复，另一些项目因为变化或写入失败没有处理。"
+        default:
+            return "这次撤销没有完成。"
+        }
+    }
+
+    private func undoSummary(for record: AgentUndoRecord) -> String {
+        let restored = record.outcomes.filter { $0.status == .undone }.count
+        let unresolved = record.outcomes.count - restored
+        return unresolved == 0 ? "已恢复 \(restored) 项操作" : "已恢复 \(restored) 项，未恢复 \(unresolved) 项"
+    }
+
+    private func structuredPresentation(from log: ActionLog) -> AgentConversationPresentation? {
+        guard log.actionType == "agent_run",
+              let data = log.payloadJSON.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(AgentConversationPresentation.self, from: data)
+    }
+
+    @MainActor
+    private func applyStructuredPresentation(
+        _ completed: AgentConversationPresentation,
+        to log: ActionLog,
+        updatesOriginalMessage: Bool
+    ) {
         log.executionStatus = actionStatus(for: completed.result.status)
         log.errorMessage = completed.result.error?.userVisibleMessage ?? ""
         log.executedAt = .now
         if let encoded = try? JSONEncoder().encode(completed) {
             log.payloadJSON = String(decoding: encoded, as: UTF8.self)
         }
-        if let messageID = log.messageID,
+        if updatesOriginalMessage,
+           let messageID = log.messageID,
            let assistantMessage = messages.first(where: { $0.id == messageID }) {
             assistantMessage.text = completed.reply
             assistantMessage.actionResultSummary = structuredSummary(for: completed.result)
             assistantMessage.status = "sent"
         }
         try? modelContext.save()
-        if completed.result.toolResults.contains(where: {
-            isWriteTool($0.tool) && [.success, .unchanged, .alreadyApplied].contains($0.status)
-        }) {
-            await appModel.refreshReminderLists()
-        }
     }
 
     @MainActor
@@ -2790,9 +3157,43 @@ private struct ModelSetupPromptSheet: View {
     .modelContainer(for: [ChatSession.self, ChatMessage.self, ActionLog.self], inMemory: true)
 }
 
+enum AgentActionCardStatusCopy {
+    static func title(for executionStatus: String) -> String {
+        switch executionStatus {
+        case "awaiting_confirmation": return "准备好了"
+        case "cancelled": return "已取消"
+        case "success": return "处理好了"
+        case "partial": return "部分处理好了"
+        case "failed": return "没有处理完"
+        case "undone": return "已恢复"
+        case "undo_conflict": return "没有覆盖外部修改"
+        case "undo_partial": return "部分恢复"
+        case "undo_failed": return "未能恢复"
+        default: return "正在处理"
+        }
+    }
+
+    static func subtitle(for executionStatus: String, errorMessage: String) -> String {
+        switch executionStatus {
+        case "awaiting_confirmation": return "确认后才会执行这些修改"
+        case "cancelled": return "这份方案不会再执行"
+        case "partial": return "部分操作已完成，未成功的项目不会显示成已完成"
+        case "failed": return errorMessage.nonEmpty ?? "这次操作没有执行成功"
+        case "pending": return "正在按确认过的计划逐项执行"
+        case "undone": return "已经恢复到这次操作之前的状态"
+        case "undo_conflict": return "任务已发生变化，没有覆盖外部修改"
+        case "undo_partial": return "部分操作已恢复，其余项目保持当前状态"
+        case "undo_failed": return errorMessage.nonEmpty ?? "这次操作暂时无法恢复"
+        default: return "执行结果已按真实工具返回更新"
+        }
+    }
+}
+
 private struct ActionResultCardView: View {
     let log: ActionLog
     let onPrimaryAction: () -> Void
+    let onAdjustAction: () -> Void
+    let onCancelAction: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -2838,10 +3239,22 @@ private struct ActionResultCardView: View {
             }
 
             if let primaryActionTitle {
-                Button(primaryActionTitle, action: onPrimaryAction)
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    .disabled(log.executionStatus == "pending")
+                HStack(spacing: 10) {
+                    Button(primaryActionTitle, action: onPrimaryAction)
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .disabled(log.executionStatus == "pending")
+
+                    if showsPendingPlanActions {
+                        Button("调整", action: onAdjustAction)
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        Button("取消", action: onCancelAction)
+                            .buttonStyle(.plain)
+                            .controlSize(.small)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
         }
         .padding(14)
@@ -2900,13 +3313,7 @@ private struct ActionResultCardView: View {
                 return "正在核对"
             }
         case "agent_run":
-            switch log.executionStatus {
-            case "awaiting_confirmation": return "准备好了"
-            case "success": return "处理好了"
-            case "partial": return "部分处理好了"
-            case "failed": return "没有处理完"
-            default: return "正在处理"
-            }
+            return AgentActionCardStatusCopy.title(for: log.executionStatus)
         default:
             return "我处理好了"
         }
@@ -2992,13 +3399,10 @@ private struct ActionResultCardView: View {
                 return "这条已经从提醒事项里删掉了"
             }
         case "agent_run":
-            switch log.executionStatus {
-            case "awaiting_confirmation": return "确认后才会执行这些修改"
-            case "partial": return "部分操作已完成，未成功的项目不会显示成已完成"
-            case "failed": return log.errorMessage.nonEmpty ?? "这次操作没有执行成功"
-            case "pending": return "正在按确认过的计划逐项执行"
-            default: return "执行结果已按真实工具返回更新"
-            }
+            return AgentActionCardStatusCopy.subtitle(
+                for: log.executionStatus,
+                errorMessage: log.errorMessage
+            )
         default:
             return "这次我已经处理好了"
         }
@@ -3233,8 +3637,18 @@ private struct ActionResultCardView: View {
             return ("在处理", .orange, Color.orange.opacity(0.12))
         case "awaiting_confirmation":
             return ("待确认", .orange, Color.orange.opacity(0.12))
+        case "cancelled":
+            return ("已取消", .secondary, Color.secondary.opacity(0.12))
         case "failed":
             return ("没成", .red, Color.red.opacity(0.12))
+        case "undone":
+            return ("已恢复", .green, Color.green.opacity(0.12))
+        case "undo_conflict":
+            return ("有变化", .orange, Color.orange.opacity(0.12))
+        case "undo_partial":
+            return ("部分恢复", .orange, Color.orange.opacity(0.12))
+        case "undo_failed":
+            return ("未恢复", .red, Color.red.opacity(0.12))
         case "needs_clarification":
             return ("待确认", .orange, Color.orange.opacity(0.12))
         default:
@@ -3271,10 +3685,25 @@ private struct ActionResultCardView: View {
             if log.executionStatus == "awaiting_confirmation" {
                 return "执行这个计划"
             }
+            if let presentation = structuredPresentation,
+               AgentRecoveryPlanner().makePlan(from: presentation.result.toolResults)
+                .hasRetryableFailures {
+                return "重试失败项"
+            }
+            if let presentation = structuredPresentation,
+               AgentUndoRecordStore.shared.record(
+                forwardRunID: presentation.result.runID
+               )?.status == .available {
+                return "撤销"
+            }
             return ["success", "partial"].contains(log.executionStatus) ? "去看清单" : nil
         default:
             return nil
         }
+    }
+
+    private var showsPendingPlanActions: Bool {
+        log.actionType == "agent_run" && log.executionStatus == "awaiting_confirmation"
     }
 
     private func parsePayloadEnvelope() -> MockAgentEnvelope? {
@@ -3516,6 +3945,8 @@ private struct ChatMessageRow: View {
     let message: ChatMessage
     let actionLog: ActionLog?
     let onPrimaryAction: (ActionLog) -> Void
+    let onAdjustAction: (ActionLog) -> Void
+    let onCancelAction: (ActionLog) -> Void
     @State private var showsCopiedToast = false
 
     var body: some View {
@@ -3575,7 +4006,9 @@ private struct ChatMessageRow: View {
                     Group {
                         ActionResultCardView(
                             log: actionLog,
-                            onPrimaryAction: { onPrimaryAction(actionLog) }
+                            onPrimaryAction: { onPrimaryAction(actionLog) },
+                            onAdjustAction: { onAdjustAction(actionLog) },
+                            onCancelAction: { onCancelAction(actionLog) }
                         )
                         .transition(.opacity)
                     }

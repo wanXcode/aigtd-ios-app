@@ -361,7 +361,8 @@ final class ReminderAgentToolExecutorsTests: XCTestCase {
             gateway: gateway,
             writer: writer,
             ledger: AgentToolExecutionLedger(),
-            schedulePlanStore: AgentSchedulePlanStore(defaults: defaults, storageKey: "plans")
+            schedulePlanStore: AgentSchedulePlanStore(defaults: defaults, storageKey: "plans"),
+            undoStore: AgentUndoRecordStore(defaults: defaults, storageKey: "undo")
         )
     }
 
@@ -399,6 +400,7 @@ private struct ToolEnvironment {
     let writer: ToolTestWriter
     let ledger: AgentToolExecutionLedger
     let schedulePlanStore: AgentSchedulePlanStore
+    let undoStore: AgentUndoRecordStore
 
     func executor(_ tool: AgentToolName) -> ReminderAgentToolExecutor {
         ReminderAgentToolExecutor(
@@ -406,7 +408,8 @@ private struct ToolEnvironment {
             queryService: ReminderQueryService(gateway: gateway),
             writer: writer,
             ledger: ledger,
-            schedulePlanStore: schedulePlanStore
+            schedulePlanStore: schedulePlanStore,
+            undoStore: undoStore
         )
     }
 }

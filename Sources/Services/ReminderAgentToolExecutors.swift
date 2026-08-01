@@ -175,13 +175,15 @@ struct ReminderAgentToolExecutor: AgentToolExecutor {
     private let writer: any ReminderToolWriter
     private let ledger: AgentToolExecutionLedger
     private let schedulePlanStore: AgentSchedulePlanStore
+    private let undoStore: AgentUndoRecordStore
 
     init(
         toolName: AgentToolName,
         queryService: ReminderQueryService,
         writer: any ReminderToolWriter,
         ledger: AgentToolExecutionLedger,
-        schedulePlanStore: AgentSchedulePlanStore = .shared
+        schedulePlanStore: AgentSchedulePlanStore = .shared,
+        undoStore: AgentUndoRecordStore = .shared
     ) {
         self.toolName = toolName
         self.riskLevel = Self.risk(for: toolName)
@@ -189,13 +191,15 @@ struct ReminderAgentToolExecutor: AgentToolExecutor {
         self.writer = writer
         self.ledger = ledger
         self.schedulePlanStore = schedulePlanStore
+        self.undoStore = undoStore
     }
 
     static func standardExecutors(
         gateway: any ReminderStoreGateway = EventKitReminderStoreGateway(),
         writer: any ReminderToolWriter = EventKitReminderToolWriter(),
         ledger: AgentToolExecutionLedger = .shared,
-        schedulePlanStore: AgentSchedulePlanStore = .shared
+        schedulePlanStore: AgentSchedulePlanStore = .shared,
+        undoStore: AgentUndoRecordStore = .shared
     ) -> [ReminderAgentToolExecutor] {
         let query = ReminderQueryService(gateway: gateway)
         return [
@@ -207,7 +211,8 @@ struct ReminderAgentToolExecutor: AgentToolExecutor {
                 queryService: query,
                 writer: writer,
                 ledger: ledger,
-                schedulePlanStore: schedulePlanStore
+                schedulePlanStore: schedulePlanStore,
+                undoStore: undoStore
             )
         }
     }
@@ -228,21 +233,21 @@ struct ReminderAgentToolExecutor: AgentToolExecutor {
         case .getReminderDetails:
             output = try await details(arguments)
         case .createReminder:
-            output = try await create(arguments)
+            output = try await create(arguments, runID: runID, callID: callID)
         case .createList:
             output = try await createList(arguments)
         case .updateReminder:
-            output = try await update(arguments)
+            output = try await update(arguments, runID: runID, callID: callID)
         case .moveReminder:
-            output = try await move(arguments)
+            output = try await move(arguments, runID: runID, callID: callID)
         case .completeReminder:
-            output = try await complete(arguments)
+            output = try await complete(arguments, runID: runID, callID: callID)
         case .deleteReminder:
             output = try await delete(arguments)
         case .proposeSchedule:
             output = try await proposeSchedule(arguments, runID: runID)
         case .applySchedule:
-            output = try await applySchedule(arguments, runID: runID)
+            output = try await applySchedule(arguments, runID: runID, callID: callID)
         default:
             throw AgentToolError(category: .unknownTool, userVisibleMessage: "不支持该工具。")
         }
@@ -290,7 +295,11 @@ struct ReminderAgentToolExecutor: AgentToolExecutor {
         return .init(result: .init(["items": .array(records.map(json))]))
     }
 
-    private func create(_ arguments: AgentToolArguments) async throws -> AgentToolExecutionOutput {
+    private func create(
+        _ arguments: AgentToolArguments,
+        runID: UUID,
+        callID: String
+    ) async throws -> AgentToolExecutionOutput {
         try await requireWriteAccess()
         let title = try arguments.requiredString("title")
         let dueDate = try arguments.date("due_date")
@@ -311,6 +320,15 @@ struct ReminderAgentToolExecutor: AgentToolExecutor {
         if let dueDate {
             result["due_date"] = .string(ISO8601DateFormatter().string(from: dueDate))
         }
+        if let taskVersion = await taskVersion(for: id) {
+            try? undoStore.recordSuccessfulOperation(
+                forwardRunID: runID,
+                operation: AgentUndoOperation(
+                    forwardCallID: callID,
+                    inverseOperation: .removeCreatedReminder(taskVersion: taskVersion)
+                )
+            )
+        }
         return .init(result: .init(result))
     }
 
@@ -327,9 +345,17 @@ struct ReminderAgentToolExecutor: AgentToolExecutor {
         )
     }
 
-    private func update(_ arguments: AgentToolArguments) async throws -> AgentToolExecutionOutput {
+    private func update(
+        _ arguments: AgentToolArguments,
+        runID: UUID,
+        callID: String
+    ) async throws -> AgentToolExecutionOutput {
         let id = try arguments.requiredString("reminder_id")
-        let current = try await checkedRecord(id: id, arguments: arguments)
+        let current = try await checkedRecord(
+            id: id,
+            arguments: arguments,
+            allowsNotes: arguments["notes"] != nil
+        )
         let mutation = ReminderToolMutation(
             title: arguments.string("title"),
             notes: arguments.string("notes"),
@@ -343,11 +369,25 @@ struct ReminderAgentToolExecutor: AgentToolExecutor {
         if isUnchanged(current, mutation: mutation) {
             return .init(status: .unchanged, result: .init(["reminder_id": .string(id)]))
         }
+        let changes = undoFieldChanges(current: current, mutation: mutation)
         try await writer.update(id: id, mutation: mutation)
+        if changes.isEmpty == false, let taskVersion = await taskVersion(for: id) {
+            try? undoStore.recordSuccessfulOperation(
+                forwardRunID: runID,
+                operation: AgentUndoOperation(
+                    forwardCallID: callID,
+                    inverseOperation: .restoreFields(taskVersion: taskVersion, changes: changes)
+                )
+            )
+        }
         return .init(result: .init(["reminder_id": .string(id)]))
     }
 
-    private func move(_ arguments: AgentToolArguments) async throws -> AgentToolExecutionOutput {
+    private func move(
+        _ arguments: AgentToolArguments,
+        runID: UUID,
+        callID: String
+    ) async throws -> AgentToolExecutionOutput {
         let id = try arguments.requiredString("reminder_id")
         let current = try await checkedRecord(id: id, arguments: arguments)
         let listID = arguments.string("list_id")
@@ -357,10 +397,27 @@ struct ReminderAgentToolExecutor: AgentToolExecutor {
             return .init(status: .unchanged, result: .init(["reminder_id": .string(id)]))
         }
         try await writer.move(id: id, listID: listID, listTitle: listTitle)
+        if let taskVersion = await taskVersion(for: id), let forwardListID = taskVersion.listID {
+            try? undoStore.recordSuccessfulOperation(
+                forwardRunID: runID,
+                operation: AgentUndoOperation(
+                    forwardCallID: callID,
+                    inverseOperation: .restoreList(
+                        taskVersion: taskVersion,
+                        originalListID: current.listID,
+                        forwardListID: forwardListID
+                    )
+                )
+            )
+        }
         return .init(result: .init(["reminder_id": .string(id)]))
     }
 
-    private func complete(_ arguments: AgentToolArguments) async throws -> AgentToolExecutionOutput {
+    private func complete(
+        _ arguments: AgentToolArguments,
+        runID: UUID,
+        callID: String
+    ) async throws -> AgentToolExecutionOutput {
         let id = try arguments.requiredString("reminder_id")
         let desired = arguments.bool("is_completed") ?? true
         let current = try await checkedRecord(id: id, arguments: arguments)
@@ -368,6 +425,19 @@ struct ReminderAgentToolExecutor: AgentToolExecutor {
             return .init(status: .unchanged, result: .init(["reminder_id": .string(id), "is_completed": .bool(desired)]))
         }
         try await writer.setCompleted(id: id, isCompleted: desired)
+        if let taskVersion = await taskVersion(for: id) {
+            try? undoStore.recordSuccessfulOperation(
+                forwardRunID: runID,
+                operation: AgentUndoOperation(
+                    forwardCallID: callID,
+                    inverseOperation: .restoreCompletion(
+                        taskVersion: taskVersion,
+                        originalIsCompleted: current.isCompleted ?? false,
+                        forwardIsCompleted: desired
+                    )
+                )
+            )
+        }
         return .init(result: .init(["reminder_id": .string(id), "is_completed": .bool(desired)]))
     }
 
@@ -423,7 +493,8 @@ struct ReminderAgentToolExecutor: AgentToolExecutor {
 
     private func applySchedule(
         _ arguments: AgentToolArguments,
-        runID: UUID
+        runID: UUID,
+        callID: String
     ) async throws -> AgentToolExecutionOutput {
         guard arguments.bool("confirmed") == true else {
             throw toolError(.confirmationRequired, "执行排期方案前需要确认。")
@@ -437,8 +508,12 @@ struct ReminderAgentToolExecutor: AgentToolExecutor {
             return .init(status: .alreadyApplied, result: scheduleResult(plan))
         }
         plan = try schedulePlanStore.markExecuting(id: planID)
+        let retryItemIDs = Set(arguments.strings("retry_item_ids") ?? [])
 
-        for item in plan.items where item.status != .applied && item.status != .unchanged {
+        for item in plan.items where
+            item.status != .applied &&
+            item.status != .unchanged &&
+            (retryItemIDs.isEmpty || retryItemIDs.contains(item.id)) {
             try Task.checkCancellation()
             let currentPlan = try schedulePlanStore.load(id: planID, runID: runID)
             let blockedDependencies = item.dependencyIDs.filter { dependencyID in
@@ -468,6 +543,27 @@ struct ReminderAgentToolExecutor: AgentToolExecutor {
                         id: item.reminderID,
                         mutation: ReminderToolMutation(dueDate: item.targetDueDate, includesTime: item.includesTime)
                     )
+                    if let taskVersion = await taskVersion(for: item.reminderID) {
+                        let changes = [
+                            AgentUndoFieldChange(
+                                field: .dueDate,
+                                originalValue: item.originalDueDate.map(AgentUndoFieldValue.date) ?? .none,
+                                forwardValue: .date(item.targetDueDate)
+                            ),
+                            AgentUndoFieldChange(
+                                field: .includesTime,
+                                originalValue: .bool(current.includesTime),
+                                forwardValue: .bool(item.includesTime)
+                            )
+                        ]
+                        try? undoStore.recordSuccessfulOperation(
+                            forwardRunID: runID,
+                            operation: AgentUndoOperation(
+                                forwardCallID: "\(callID)#\(item.id)",
+                                inverseOperation: .restoreFields(taskVersion: taskVersion, changes: changes)
+                            )
+                        )
+                    }
                     plan = try schedulePlanStore.record(planID: planID, itemID: item.id, status: .applied)
                 }
             } catch is CancellationError {
@@ -528,11 +624,81 @@ struct ReminderAgentToolExecutor: AgentToolExecutor {
         ])
     }
 
-    private func checkedRecord(id: String, arguments: AgentToolArguments) async throws -> ReminderQueryResult {
+    private func taskVersion(for id: String) async -> AgentUndoTaskVersion? {
+        guard let record = try? await queryService.details(
+            forIDs: [id],
+            privacy: ReminderQueryPrivacy(allowsNotes: true, allowsCompletedReminders: true)
+        ).first else {
+            return nil
+        }
+        return AgentUndoTaskVersion(
+            reminderID: record.id,
+            lastModifiedAt: record.lastModifiedAt,
+            title: record.title,
+            dueDate: record.dueDate,
+            hasDueDateSnapshot: true,
+            includesTime: record.includesTime,
+            listID: record.listID,
+            isCompleted: record.isCompleted,
+            notesDigest: AgentUndoNotesDigest.digest(record.notes)
+        )
+    }
+
+    private func undoFieldChanges(
+        current: ReminderQueryResult,
+        mutation: ReminderToolMutation
+    ) -> [AgentUndoFieldChange] {
+        var changes: [AgentUndoFieldChange] = []
+        if let title = mutation.title, title != current.title {
+            changes.append(.init(
+                field: .title,
+                originalValue: .string(current.title),
+                forwardValue: .string(title)
+            ))
+        }
+        if let notes = mutation.notes, notes != current.notes {
+            changes.append(.init(
+                field: .notes,
+                originalValue: current.notes.map(AgentUndoFieldValue.string) ?? .none,
+                forwardValue: .string(notes)
+            ))
+        }
+        if mutation.clearsDueDate, current.dueDate != nil {
+            changes.append(.init(
+                field: .dueDate,
+                originalValue: current.dueDate.map(AgentUndoFieldValue.date) ?? .none,
+                forwardValue: .none
+            ))
+        } else if let dueDate = mutation.dueDate,
+                  sameMinute(dueDate, current.dueDate) == false {
+            changes.append(.init(
+                field: .dueDate,
+                originalValue: current.dueDate.map(AgentUndoFieldValue.date) ?? .none,
+                forwardValue: .date(dueDate)
+            ))
+        }
+        if let includesTime = mutation.includesTime, includesTime != current.includesTime {
+            changes.append(.init(
+                field: .includesTime,
+                originalValue: .bool(current.includesTime),
+                forwardValue: .bool(includesTime)
+            ))
+        }
+        return changes
+    }
+
+    private func checkedRecord(
+        id: String,
+        arguments: AgentToolArguments,
+        allowsNotes: Bool = false
+    ) async throws -> ReminderQueryResult {
         try await requireWriteAccess()
         let records = try await queryService.details(
             forIDs: [id],
-            privacy: ReminderQueryPrivacy(allowsNotes: false, allowsCompletedReminders: true)
+            privacy: ReminderQueryPrivacy(
+                allowsNotes: allowsNotes,
+                allowsCompletedReminders: true
+            )
         )
         guard let record = records.first else { throw toolError(.notFound, "没有找到指定任务。") }
         let expected = ReminderWritePreconditions(

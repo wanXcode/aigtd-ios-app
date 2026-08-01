@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.6.0 - 2026-08-02
+
+`0.6.0 (20)` completes the natural confirmation, recovery, and reversible-action development scope. Final iPhone and TestFlight upgrade acceptance passed.
+
+### Added
+
+- added versioned pending interactions that survive app restarts and invalidate superseded or expired plans
+- added exact local text confirmation and cancellation for the current session's active plan
+- added a unified local execution policy that prevents model confirmation fields from bypassing safety rules
+- added failed-item-only recovery with original run and call identity reuse
+- added persisted inverse operations for task creation, field updates, moves, completion changes, and schedule application
+- added card and natural-language undo with ten-minute availability, reverse-order execution, and external-change conflict protection
+- expanded the multi-tool safety fixture from 40 to 70 cases across confirmation, plan editing, recovery, and undo
+
+### Improved
+
+- pending cards now provide execute, adjust, and cancel actions through the same deterministic interaction state
+- pending, result, retry, and undo states update the original card instead of adding replacement cards
+- partial failures expose retry only when retryable failed items remain and never repeat successful or unchanged writes
+- undo snapshots retain only required values; task notes are compared using SHA-256 rather than copied into general snapshots
+- semantically identical writes are deduplicated locally across model turns even when the model changes `call_id`
+- undo cards now use explicit restored, partial, conflict, and failed terminal copy instead of retaining pending text
+
+### Fixed
+
+- fixed a high-risk loop where one create intent could execute four times with different model call IDs before exhausting the orchestration budget
+- fixed restored cards showing an “in progress” title after undo had already completed
+
+### Safety
+
+- ambiguous targets, missing stable IDs, stale preconditions, and externally changed tasks remain non-executable
+- long-term transaction rules may tighten confirmation but cannot weaken local uniqueness and precondition checks
+- delete operations remain non-reversible and never advertise a false undo action
+- old persisted undo snapshots decode safely and missing new snapshot fields default to conservative behavior
+
+### Validation
+
+- generic iOS build and `build-for-testing` succeed
+- 334/334 XCTest methods pass on iPhone 15 Pro Max with 0 failures
+- 70 multi-tool evaluation fixtures pass structural and safety validation
+- all 15 iPhone experience cases pass, including the duplicate-write and undo-copy fixes discovered during acceptance
+- uploaded `0.6.0 (20)` to App Store Connect on 2026-08-02; Apple finished processing it and assigned it to the internal `test` group
+- passed the TestFlight in-place upgrade data-safety check and the focused multi-action, natural confirmation, undo, and external-conflict regression
+
 ## 0.5.0 - 2026-07-31
 
 `0.5.0 (19)` completes structured tool calling, multi-action execution, and the final TestFlight upgrade acceptance.
