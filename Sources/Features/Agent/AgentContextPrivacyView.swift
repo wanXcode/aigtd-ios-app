@@ -14,25 +14,25 @@ struct AgentContextPrivacyView: View {
 
     var body: some View {
         Form {
-            Section("当前会话") {
-                LabeledContent("上下文状态", value: storedContext == nil ? "尚未建立" : "已建立")
-                LabeledContent("最近引用", value: "\(referenceCount) 条")
-                LabeledContent("会话摘要", value: summaryStatus)
-                LabeledContent("长期记忆", value: "\(memoryItemCount) 条")
+            Section("记忆概览") {
+                LabeledContent("本次对话", value: storedContext == nil ? "尚未记住" : "已记住")
+                LabeledContent("关联任务", value: "\(referenceCount) 条")
+                LabeledContent("最近整理", value: summaryStatus)
+                LabeledContent("长期偏好", value: "\(memoryItemCount) 条")
             }
 
             Section {
                 Toggle("允许读取任务备注", isOn: includesNotesBinding)
                 Toggle("允许包含已完成任务", isOn: includesCompletedBinding)
-                Stepper("发送任务上限：\(settings.maximumReminderCount)", value: reminderLimitBinding, in: 5...100, step: 5)
+                Stepper("参考任务上限：\(settings.maximumReminderCount)", value: reminderLimitBinding, in: 5...100, step: 5)
             } header: {
-                Text("发送给模型的任务数据")
+                Text("小满可参考的任务信息")
             } footer: {
-                Text("默认只发送必要的标题、清单和时间。设置会在下一次对话请求中生效。")
+                Text("默认只使用必要的标题、清单和时间。设置会在下一次对话中生效。")
             }
 
             Section("本地数据") {
-                Button("清除当前会话上下文", role: .destructive) {
+                Button("清除本次对话记忆", role: .destructive) {
                     showsClearContextConfirmation = true
                 }
                 .disabled(activeSessionID == nil || storedContext == nil)
@@ -73,8 +73,8 @@ struct AgentContextPrivacyView: View {
         .navigationTitle("上下文与隐私")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear(perform: refresh)
-        .confirmationDialog("清除当前会话上下文？", isPresented: $showsClearContextConfirmation, titleVisibility: .visible) {
-            Button("清除上下文", role: .destructive, action: clearCurrentContext)
+        .confirmationDialog("清除本次对话记忆？", isPresented: $showsClearContextConfirmation, titleVisibility: .visible) {
+            Button("清除对话记忆", role: .destructive, action: clearCurrentContext)
             Button("取消", role: .cancel) {}
         } message: {
             Text("会清除摘要和最近任务引用，但不会删除聊天记录或系统提醒事项。")

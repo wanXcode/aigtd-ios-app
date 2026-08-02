@@ -1,6 +1,6 @@
 import Foundation
 
-final class DoubaoOfficialASRSession: NSObject, SpeechEngineDelegate, @unchecked Sendable {
+final class DoubaoOfficialASRSession: NSObject, SpeechEngineDelegate, VoiceLiveTranscriptionSession, @unchecked Sendable {
     private let defaultEndpoint = "wss://openspeech.bytedance.com"
     private let configuration: VoiceTranscriptionConfiguration
     private let stateQueue = DispatchQueue(label: "ai.gtd.voice.sdk.state")
@@ -55,63 +55,73 @@ final class DoubaoOfficialASRSession: NSObject, SpeechEngineDelegate, @unchecked
             lastEngineMessage = ""
             finishTimeoutWorkItem?.cancel()
             finishTimeoutWorkItem = nil
+            updateHandler = onUpdate
         }
-        let createdEngine = try engineQueue.sync { () throws -> SpeechEngine in
-            let engine = SpeechEngine()
-            guard engine.createEngine(with: self) else {
-                throw VoiceTranscriptionError.connectionFailed("豆包语音 SDK 创建引擎失败。")
+        let createdEngine: SpeechEngine
+        do {
+            createdEngine = try engineQueue.sync { () throws -> SpeechEngine in
+                let engine = SpeechEngine()
+                guard engine.createEngine(with: self) else {
+                    throw VoiceTranscriptionError.connectionFailed("豆包语音 SDK 创建引擎失败。")
+                }
+
+                engine.setStringParam(SE_ASR_ENGINE, forKey: SE_PARAMS_KEY_ENGINE_NAME_STRING)
+                engine.setStringParam(SE_LOG_LEVEL_DEBUG, forKey: SE_PARAMS_KEY_LOG_LEVEL_STRING)
+                engine.setStringParam(SE_RECORDER_TYPE_RECORDER, forKey: SE_PARAMS_KEY_RECORDER_TYPE_STRING)
+                engine.setStringParam(appID, forKey: SE_PARAMS_KEY_APP_ID_STRING)
+                engine.setStringParam(bearerToken, forKey: SE_PARAMS_KEY_APP_TOKEN_STRING)
+                engine.setStringParam(userID, forKey: SE_PARAMS_KEY_UID_STRING)
+                engine.setStringParam(cluster, forKey: SE_PARAMS_KEY_ASR_CLUSTER_STRING)
+                engine.setStringParam(address, forKey: SE_PARAMS_KEY_ASR_ADDRESS_STRING)
+                engine.setStringParam(uri, forKey: SE_PARAMS_KEY_ASR_URI_STRING)
+                engine.setStringParam(resolvedLanguage, forKey: SE_PARAMS_KEY_ASR_LANGUAGE_STRING)
+                engine.setBoolParam(true, forKey: SE_PARAMS_KEY_ASR_ENABLE_DDC_BOOL)
+                engine.setBoolParam(true, forKey: SE_PARAMS_KEY_ASR_SHOW_NLU_PUNC_BOOL)
+                engine.setBoolParam(true, forKey: SE_PARAMS_KEY_ASR_DISABLE_END_PUNC_BOOL)
+                engine.setBoolParam(false, forKey: SE_PARAMS_KEY_ASR_AUTO_STOP_BOOL)
+                engine.setIntParam(60_000, forKey: SE_PARAMS_KEY_VAD_MAX_SPEECH_DURATION_INT)
+                engine.setBoolParam(true, forKey: SE_PARAMS_KEY_ENABLE_GET_VOLUME_BOOL)
+                engine.setStringParam(SE_ASR_RESULT_TYPE_SINGLE, forKey: SE_PARAMS_KEY_ASR_RESULT_TYPE_STRING)
+
+                let ret = engine.initEngine()
+                guard ret == SENoError else {
+                    engine.destroy()
+                    throw VoiceTranscriptionError.serviceError("豆包语音 SDK 初始化失败：\(ret.rawValue)")
+                }
+
+                _ = engine.send(SEDirectiveSyncStopEngine, data: "")
+                let startRet = engine.send(SEDirectiveStartEngine, data: "")
+                guard startRet == SENoError else {
+                    engine.destroy()
+                    throw VoiceTranscriptionError.serviceError("启动语音识别失败：\(startRet.rawValue)")
+                }
+
+                return engine
             }
-
-            engine.setStringParam(SE_ASR_ENGINE, forKey: SE_PARAMS_KEY_ENGINE_NAME_STRING)
-            engine.setStringParam(SE_LOG_LEVEL_DEBUG, forKey: SE_PARAMS_KEY_LOG_LEVEL_STRING)
-            engine.setStringParam(SE_RECORDER_TYPE_RECORDER, forKey: SE_PARAMS_KEY_RECORDER_TYPE_STRING)
-            engine.setStringParam(appID, forKey: SE_PARAMS_KEY_APP_ID_STRING)
-            engine.setStringParam(bearerToken, forKey: SE_PARAMS_KEY_APP_TOKEN_STRING)
-            engine.setStringParam(userID, forKey: SE_PARAMS_KEY_UID_STRING)
-            engine.setStringParam(cluster, forKey: SE_PARAMS_KEY_ASR_CLUSTER_STRING)
-            engine.setStringParam(address, forKey: SE_PARAMS_KEY_ASR_ADDRESS_STRING)
-            engine.setStringParam(uri, forKey: SE_PARAMS_KEY_ASR_URI_STRING)
-            engine.setStringParam(resolvedLanguage, forKey: SE_PARAMS_KEY_ASR_LANGUAGE_STRING)
-            engine.setBoolParam(true, forKey: SE_PARAMS_KEY_ASR_ENABLE_DDC_BOOL)
-            engine.setBoolParam(true, forKey: SE_PARAMS_KEY_ASR_SHOW_NLU_PUNC_BOOL)
-            engine.setBoolParam(true, forKey: SE_PARAMS_KEY_ASR_DISABLE_END_PUNC_BOOL)
-            engine.setBoolParam(false, forKey: SE_PARAMS_KEY_ASR_AUTO_STOP_BOOL)
-            engine.setIntParam(60_000, forKey: SE_PARAMS_KEY_VAD_MAX_SPEECH_DURATION_INT)
-            engine.setBoolParam(true, forKey: SE_PARAMS_KEY_ENABLE_GET_VOLUME_BOOL)
-            engine.setStringParam(SE_ASR_RESULT_TYPE_SINGLE, forKey: SE_PARAMS_KEY_ASR_RESULT_TYPE_STRING)
-
-            let ret = engine.initEngine()
-            guard ret == SENoError else {
-                engine.destroy()
-                throw VoiceTranscriptionError.serviceError("豆包语音 SDK 初始化失败：\(ret.rawValue)")
+        } catch {
+            stateQueue.sync {
+                updateHandler = nil
             }
-
-            _ = engine.send(SEDirectiveSyncStopEngine, data: "")
-            let startRet = engine.send(SEDirectiveStartEngine, data: "")
-            guard startRet == SENoError else {
-                engine.destroy()
-                throw VoiceTranscriptionError.serviceError("启动语音识别失败：\(startRet.rawValue)")
-            }
-
-            return engine
+            throw error
         }
 
         self.engine = createdEngine
-        self.updateHandler = onUpdate
     }
 
     func finish() async throws -> VoiceTranscriptionResult {
-        let snapshot = stateQueue.sync {
-            (
-                engineReady: hasStartedEngine && self.engine != nil,
-                lastMessage: lastEngineMessage,
-                rawSummary: rawEvents.suffix(8).joined(separator: "\n")
-            )
+        var snapshot = sessionReadinessSnapshot()
+        if snapshot.engineReady == false {
+            // A short press can be released while the SDK is still reporting its
+            // asynchronous engine-start event. Give that event a small grace period.
+            for _ in 0..<8 where snapshot.engineReady == false {
+                try await Task.sleep(for: .milliseconds(50))
+                snapshot = sessionReadinessSnapshot()
+            }
         }
         guard snapshot.engineReady else {
             let message = formatSDKErrorMessage(
                 primary: snapshot.lastMessage,
-                fallback: "语音引擎还没准备好，哥哥你再试一下。",
+                fallback: "语音还没准备好，请再试一次。",
                 rawSummary: snapshot.rawSummary
             )
             throw VoiceTranscriptionError.connectionFailed(message)
@@ -139,7 +149,7 @@ final class DoubaoOfficialASRSession: NSObject, SpeechEngineDelegate, @unchecked
                             let rawSummary = self.rawEvents.suffix(8).joined(separator: "\n")
                             let message = self.formatSDKErrorMessage(
                                 primary: self.lastEngineMessage,
-                                fallback: "语音识别超时了，哥哥你再试一下。",
+                                fallback: "没有听清，请再试一次。",
                                 rawSummary: rawSummary
                             )
                             self.finishLocked(
@@ -157,7 +167,7 @@ final class DoubaoOfficialASRSession: NSObject, SpeechEngineDelegate, @unchecked
                 guard let ret else {
                     self.finishLocked(
                         result: nil,
-                        error: VoiceTranscriptionError.connectionFailed("语音引擎已断开，哥哥你再试一下。")
+                        error: VoiceTranscriptionError.connectionFailed("语音连接已中断，请再试一次。")
                     )
                     return
                 }
@@ -282,6 +292,16 @@ final class DoubaoOfficialASRSession: NSObject, SpeechEngineDelegate, @unchecked
 
     private func decodeText(from data: Data) -> String {
         String(data: data, encoding: .utf8) ?? ""
+    }
+
+    private func sessionReadinessSnapshot() -> (engineReady: Bool, lastMessage: String, rawSummary: String) {
+        stateQueue.sync {
+            (
+                engineReady: hasStartedEngine && self.engine != nil,
+                lastMessage: lastEngineMessage,
+                rawSummary: rawEvents.suffix(8).joined(separator: "\n")
+            )
+        }
     }
 
     private func resolveWebSocketEndpoint() -> URL {

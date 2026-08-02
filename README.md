@@ -19,7 +19,9 @@ The current implementation is built around a simple principle:
 
 Current TestFlight-verified release: `0.6.0 (20)`
 
-Next planned release: `0.7.0`
+Current development candidate: `0.7.0 (21)` public product experience upgrade
+
+- [v0.7.0 PRD](docs/releases/v0.7.0-prd.md)
 
 Latest release notes:
 

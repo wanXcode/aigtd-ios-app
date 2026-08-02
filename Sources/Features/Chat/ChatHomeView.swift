@@ -3,10 +3,50 @@ import SwiftUI
 import AVFoundation
 import UIKit
 
+struct ReminderAdjustmentSelection: Equatable, Sendable {
+    let reminderID: String
+    let reminderTitle: String
+}
+
+enum ReminderAdjustmentDraftPolicy {
+    static func retainedSelection(
+        _ selection: ReminderAdjustmentSelection?,
+        in draft: String
+    ) -> ReminderAdjustmentSelection? {
+        guard let selection,
+              referencesReminder(named: selection.reminderTitle, in: draft) else {
+            return nil
+        }
+        return selection
+    }
+
+    static func referencesReminder(named title: String, in draft: String) -> Bool {
+        let normalizedTitle = normalized(title)
+        let normalizedDraft = normalized(draft)
+        guard normalizedTitle.isEmpty == false, normalizedDraft.isEmpty == false else {
+            return false
+        }
+        return normalizedDraft.contains(normalizedTitle)
+    }
+
+    private static func normalized(_ value: String) -> String {
+        let ignored = CharacterSet.whitespacesAndNewlines
+            .union(.punctuationCharacters)
+        return value
+            .folding(options: [.caseInsensitive, .widthInsensitive], locale: .current)
+            .unicodeScalars
+            .filter { ignored.contains($0) == false }
+            .map(String.init)
+            .joined()
+    }
+}
+
 struct ChatHomeView: View {
     private static let bottomAnchorID = "chat-bottom-anchor"
     @Environment(\.modelContext) private var modelContext
     @Environment(AppModel.self) private var appModel
+    @Environment(XiaomanWelcomeStore.self) private var welcomeStore
+    @Environment(\.scenePhase) private var scenePhase
     @Query(sort: \ChatSession.updatedAt, order: .reverse) private var sessions: [ChatSession]
     @Query(sort: \ChatMessage.createdAt) private var messages: [ChatMessage]
     @Query(sort: \ActionLog.createdAt) private var actionLogs: [ActionLog]
@@ -24,7 +64,6 @@ struct ChatHomeView: View {
     @State private var isRecordingVoice = false
     @State private var isTranscribingVoice = false
     @State private var isFinalizingVoice = false
-    @State private var keyboardInset: CGFloat = 0
     @State private var activeVoiceSession: DoubaoOfficialASRSession?
     @State private var draftBeforeVoiceInput = ""
     @State private var hasVoiceUpdatedDraft = false
@@ -36,6 +75,12 @@ struct ChatHomeView: View {
     @State private var composerFocusRequestID = UUID()
     @State private var isComposerFocused = false
     @State private var executingActionIDs: Set<UUID> = []
+    @State private var timelineIsNearBottom = true
+    @State private var timelineIsUserInteracting = false
+    @State private var viewportController = ChatViewportController()
+    @State private var streamingTextBuffer = ChatStreamingTextBuffer()
+    @State private var pendingReminderAdjustmentSelection: ReminderAdjustmentSelection?
+    @StateObject private var voiceInteraction = VoiceInteractionState()
     private let agentRuntime = AgentRuntimeService()
     private let conversationCoordinator = AgentConversationCoordinator()
     @StateObject private var composerFocusBridge = ComposerTextViewFocusBridge()
@@ -59,6 +104,7 @@ struct ChatHomeView: View {
                         ForEach(activeMessages, id: \.id) { message in
                             ChatMessageRow(
                                 message: message,
+                                streamingText: streamingTextBuffer.text(for: message.id),
                                 actionLog: latestActionLogByMessageID[message.id],
                                 onPrimaryAction: handleCardPrimaryAction,
                                 onAdjustAction: handleCardAdjustAction,
@@ -83,61 +129,98 @@ struct ChatHomeView: View {
             .background(chatBackground)
             .scrollDismissesKeyboard(.interactively)
             .scrollIndicators(.hidden)
+            .onScrollGeometryChange(for: Bool.self) { geometry in
+                let visibleBottom = geometry.contentOffset.y + geometry.containerSize.height
+                return geometry.contentSize.height - visibleBottom <= 72
+            } action: { _, isNearBottom in
+                timelineIsNearBottom = isNearBottom
+                viewportController.viewportDidChange(
+                    isNearBottom: isNearBottom,
+                    isUserInteracting: timelineIsUserInteracting
+                )
+            }
+            .onScrollPhaseChange { _, newPhase in
+                let wasUserInteracting = timelineIsUserInteracting
+                let isUserInteracting = newPhase != .idle && newPhase != .animating
+                timelineIsUserInteracting = isUserInteracting
+                if isUserInteracting {
+                    viewportController.viewportDidChange(
+                        isNearBottom: timelineIsNearBottom,
+                        isUserInteracting: true
+                    )
+                } else if newPhase == .idle, wasUserInteracting {
+                    viewportController.userInteractionDidEnd(
+                        isNearBottom: timelineIsNearBottom
+                    )
+                }
+            }
             .onAppear {
                 reconcileInterruptedStructuredLogs()
-                scrollToLatestMessage(using: proxy, animated: false)
+                viewportController.chatBecameVisible()
             }
             .onChange(of: activeMessages.count) { _, _ in
-                scrollToLatestMessage(using: proxy, animated: true)
-            }
-            .onChange(of: keyboardInset) { _, newInset in
-                if newInset <= 0.5 {
-                    // Keyboard just dismissed: always pin back to the latest message.
-                    scrollToLatestMessage(using: proxy, animated: true)
-                    return
-                }
-                guard isComposerFocused || isRecordingVoice || isTranscribingVoice else { return }
-                scrollToLatestMessage(using: proxy, animated: true)
+                viewportController.contentDidChange(.messageInserted)
             }
             .onChange(of: isComposerFocused) { _, focused in
                 guard focused else { return }
-                scrollToLatestMessage(using: proxy, animated: true)
+                viewportController.composerFocused()
             }
             .onChange(of: appModel.selectedTab) { _, newValue in
                 guard newValue == .chat else { return }
-                scrollToLatestMessage(using: proxy, animated: false)
+                viewportController.chatBecameVisible()
             }
-            .onChange(of: activeMessageScrollSignature) { _, _ in
-                scrollToLatestMessage(using: proxy, animated: true)
+            .onChange(of: streamingTextBuffer.revision) { _, _ in
+                viewportController.contentDidChange(.streamingText)
+            }
+            .onChange(of: activeCardScrollSignature) { _, _ in
+                viewportController.contentDidChange(.cardState)
+            }
+            .onChange(of: viewportController.scrollRequest.sequence) { _, _ in
+                performScrollRequest(
+                    viewportController.scrollRequest,
+                    using: proxy
+                )
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 ChatComposer(
                     draft: $draft,
                     isSending: isSending,
                     isStreamingReply: isStreamingReply,
-                    isVoicePrimed: isVoicePrimed,
-                    isRecordingVoice: isRecordingVoice,
-                    isTranscribingVoice: isTranscribingVoice,
-                    isFinalizingVoice: isFinalizingVoice,
-                    tailHighlightLength: voiceTailHighlightLength,
-                    tailAnimatedDotsCount: voiceTailAnimatedDotsCount,
+                    voiceState: voiceInteraction,
+                    voiceConfiguration: activeVoiceConfiguration,
                     focusRequestID: $composerFocusRequestID,
                     isFocused: $isComposerFocused,
                     focusBridge: composerFocusBridge,
-                    onToggleVoice: {
-                        Task {
-                            await handleVoiceToggle()
-                        }
-                    },
                     onSend: {
                         Task {
                             await sendDraft()
                         }
                     },
-                    onVoiceInputTakeoverByKeyboard: {
-                        handleVoiceKeyboardTakeover()
+                    onVoiceUnavailable: {
+                        runtimeNotice = RuntimeNotice(
+                            text: "语音输入暂时不可用，请稍后再试。",
+                            tone: .warning
+                        )
                     }
                 )
+                .overlay(alignment: .topTrailing) {
+                    if viewportController.showsReturnToLatest {
+                        Button {
+                            viewportController.returnToLatest()
+                        } label: {
+                            Label("回到最新", systemImage: "arrow.down")
+                                .font(.footnote.weight(.semibold))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(.regularMaterial, in: Capsule())
+                                .shadow(color: .black.opacity(0.08), radius: 8, y: 3)
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.trailing, 16)
+                        .offset(y: -42)
+                        .accessibilityHint("滚动到最新一条消息")
+                    }
+                }
             }
         }
         .navigationTitle("AIGTD")
@@ -155,8 +238,15 @@ struct ChatHomeView: View {
                 onSendNow: {
                     hasSeenModelSetupPrompt = true
                     modelSetupPrompt = nil
+                    let explicitSelection = takeReminderAdjustmentSelection(
+                        forSending: prompt.pendingDraft
+                    )
                     Task {
-                        await sendWithoutPrompt(prompt.pendingDraft, clearDraft: true)
+                        await sendWithoutPrompt(
+                            prompt.pendingDraft,
+                            clearDraft: true,
+                            explicitReminderSelection: explicitSelection
+                        )
                     }
                 },
                 onCancel: {
@@ -170,17 +260,18 @@ struct ChatHomeView: View {
         }
         .task {
             ensureMainSession()
+            insertWelcomeMessageIfNeeded()
             restorePendingDraftIfNeeded()
         }
         .onChange(of: appModel.selectedTab) { _, newValue in
             guard newValue == .chat else { return }
             restorePendingDraftIfNeeded()
         }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
-            keyboardInset = keyboardInsetValue(from: notification)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
-            keyboardInset = 0
+        .onChange(of: draft) { _, newValue in
+            pendingReminderAdjustmentSelection = ReminderAdjustmentDraftPolicy.retainedSelection(
+                pendingReminderAdjustmentSelection,
+                in: newValue
+            )
         }
         .task(id: shouldAnimateVoiceTailDots) {
             guard shouldAnimateVoiceTailDots else {
@@ -196,6 +287,44 @@ struct ChatHomeView: View {
                 voiceTailDotsCount = (voiceTailDotsCount % 3) + 1
             }
         }
+        .onChange(of: voiceInteraction.phase) { _, phase in
+            if phase == .draftReady, let preparedDraft = voiceInteraction.takePreparedDraft() {
+                draft = preparedDraft
+            } else if phase == .failed, let notice = voiceInteraction.noticeText {
+                runtimeNotice = RuntimeNotice(text: notice, tone: .warning)
+            } else if phase == .requestingPermission || phase == .starting || phase == .recording {
+                isComposerFocused = false
+                composerFocusBridge.blur()
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active {
+                voiceInteraction.handleInterruption()
+            }
+        }
+        .onChange(of: appModel.selectedTab) { _, tab in
+            if tab != .chat {
+                voiceInteraction.handleInterruption()
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if voiceInteraction.showsCaptureOverlay {
+                VoiceCaptureOverlay(
+                    state: voiceInteraction,
+                    onFinish: {
+                        Task { await voiceInteraction.releaseCapture() }
+                    },
+                    onCancel: {
+                        voiceInteraction.cancelCapture()
+                    }
+                )
+                .padding(.horizontal, 16)
+                .padding(.bottom, 76)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .zIndex(10)
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: voiceInteraction.showsCaptureOverlay)
     }
 
     private var activeSession: ChatSession? {
@@ -237,9 +366,13 @@ struct ChatHomeView: View {
         return lookup
     }
 
-    private var activeMessageScrollSignature: String {
-        guard let last = activeMessages.last else { return "" }
-        return "\(last.id.uuidString)-\(last.text.count)-\(last.status)"
+    private var activeCardScrollSignature: String {
+        guard let activeSession else { return "" }
+        return actionLogs
+            .filter { $0.sessionID == activeSession.id }
+            .suffix(4)
+            .map { "\($0.id.uuidString)-\($0.executionStatus)-\($0.errorMessage.count)" }
+            .joined(separator: "|")
     }
 
     private var voiceTailHighlightLength: Int {
@@ -316,6 +449,36 @@ struct ChatHomeView: View {
         try? modelContext.save()
     }
 
+    private func insertWelcomeMessageIfNeeded() {
+        guard let message = welcomeStore.pendingWelcomeMessage() else { return }
+        let session: ChatSession
+        var descriptor = FetchDescriptor<ChatSession>(
+            sortBy: [SortDescriptor(\.updatedAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = 1
+        if let fetched = try? modelContext.fetch(descriptor), let existing = fetched.first {
+            session = existing
+        } else {
+            let created = ChatSession(title: "主会话")
+            modelContext.insert(created)
+            session = created
+        }
+        let welcomeMessage = ChatMessage(
+            sessionID: session.id,
+            role: "assistant",
+            text: message
+        )
+        modelContext.insert(welcomeMessage)
+        session.updatedAt = .now
+        session.lastMessagePreview = message
+        do {
+            try modelContext.save()
+            welcomeStore.markWelcomePresented()
+        } catch {
+            modelContext.rollback()
+        }
+    }
+
     private func sendDraft() async {
         guard isSending == false else { return }
         let content = draft.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -333,10 +496,18 @@ struct ChatHomeView: View {
             return
         }
 
-        await sendWithoutPrompt(content, clearDraft: true)
+        let explicitSelection = takeReminderAdjustmentSelection(forSending: content)
+        await sendWithoutPrompt(
+            content,
+            clearDraft: true,
+            explicitReminderSelection: explicitSelection
+        )
     }
 
-    private func sendPrompt(_ content: String) async {
+    private func sendPrompt(
+        _ content: String,
+        explicitReminderSelection: ReminderAdjustmentSelection? = nil
+    ) async {
         let minimumPendingDisplayDuration = Duration.milliseconds(650)
         let traceID = UUID()
         let refreshesContext = shouldRefreshContext(for: content)
@@ -377,6 +548,13 @@ struct ChatHomeView: View {
             text: content
         )
         modelContext.insert(userMessage)
+        if let explicitReminderSelection {
+            recordExplicitReminderSelection(
+                explicitReminderSelection,
+                sessionID: session.id,
+                sourceMessageID: userMessage.id
+            )
+        }
 
         let assistantMessage = ChatMessage(
             sessionID: session.id,
@@ -522,9 +700,7 @@ struct ChatHomeView: View {
                     if partialText.isEmpty == false {
                         isStreamingReply = true
                     }
-                    assistantMessage.text = partialText
-                    assistantMessage.status = "streaming"
-                    try? modelContext.save()
+                    streamingTextBuffer.enqueue(partialText, for: assistantMessage.id)
                 }
             )
         }
@@ -552,7 +728,7 @@ struct ChatHomeView: View {
             remoteResult: normalizedRemoteResult,
             executionResult: executionResult
         )
-        assistantMessage.text = startsPending
+        let finalAssistantText = startsPending
             ? (awaitsConfirmation ? confirmationAssistantReply(for: executionResult) : pendingAssistantReply(for: executionResult))
             : savedMemoryDescription.map { "我记住了：\($0)。" }
                 ?? pendingMemoryConfirmationDescription.map {
@@ -560,8 +736,10 @@ struct ChatHomeView: View {
                 }
                 ?? rejectedMemoryReply
                 ?? displayResult.reply
+        assistantMessage.text = finalAssistantText
         assistantMessage.actionResultSummary = executionResult.actionType == nil ? "" : executionResult.summary
         assistantMessage.status = "sent"
+        streamingTextBuffer.removeText(for: assistantMessage.id)
         isStreamingReply = false
         if let actionType = executionResult.actionType {
             AgentTraceService.shared.record(
@@ -674,8 +852,13 @@ struct ChatHomeView: View {
         }
     }
 
-    private func sendWithoutPrompt(_ content: String, clearDraft: Bool) async {
+    private func sendWithoutPrompt(
+        _ content: String,
+        clearDraft: Bool,
+        explicitReminderSelection: ReminderAdjustmentSelection? = nil
+    ) async {
         guard isSending == false else { return }
+        viewportController.prepareForUserSend()
         isSending = true
         isStreamingReply = false
         if clearDraft {
@@ -684,7 +867,10 @@ struct ChatHomeView: View {
         defer {
             isSending = false
         }
-        await sendPrompt(content)
+        await sendPrompt(
+            content,
+            explicitReminderSelection: explicitReminderSelection
+        )
     }
 
     @MainActor
@@ -1380,11 +1566,11 @@ struct ChatHomeView: View {
             }
             group.addTask {
                 try await Task.sleep(for: .seconds(6))
-                throw VoiceTranscriptionError.connectionFailed("语音整理超时了，哥哥你再试一下。")
+                throw VoiceTranscriptionError.connectionFailed("语音整理超时了，请再试一次。")
             }
 
             guard let first = try await group.next() else {
-                throw VoiceTranscriptionError.connectionFailed("语音整理失败了，哥哥你再试一下。")
+                throw VoiceTranscriptionError.connectionFailed("语音整理失败了，请再试一次。")
             }
             group.cancelAll()
             return first
@@ -2482,13 +2668,17 @@ struct ChatHomeView: View {
         )
     }
 
-    private func scrollToLatestMessage(using proxy: ScrollViewProxy, animated: Bool) {
+    private func performScrollRequest(
+        _ request: ChatViewportController.ScrollRequest,
+        using proxy: ScrollViewProxy
+    ) {
         DispatchQueue.main.async {
-            if animated {
-                withAnimation(.easeOut(duration: 0.25)) {
+            switch request.behavior {
+            case .animated:
+                withAnimation(.easeOut(duration: 0.2)) {
                     proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
                 }
-            } else {
+            case .immediate:
                 proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
             }
         }
@@ -2887,25 +3077,74 @@ struct ChatHomeView: View {
     }
 
     private func shouldPromptForModelSetup(beforeSending content: String) -> Bool {
+#if DEBUG || INTERNAL
         guard activeModelConfiguration == nil else { return false }
         guard hasSeenModelSetupPrompt == false else { return false }
         return content.isEmpty == false
+#else
+        return false
+#endif
     }
 
     private func restorePendingDraftIfNeeded() {
         guard appModel.shouldResumeChatComposer else { return }
+        let source = appModel.chatComposerResumeSource
         let restored = appModel.consumePendingChatDraft()
+        if source == .reminderAdjustment {
+            pendingReminderAdjustmentSelection = nil
+            if let item = appModel.consumePendingReminderAdjustmentContext() {
+                pendingReminderAdjustmentSelection = ReminderAdjustmentSelection(
+                    reminderID: item.id,
+                    reminderTitle: item.title
+                )
+            }
+        }
         if restored.isEmpty == false {
             draft = restored
         }
+        pendingReminderAdjustmentSelection = ReminderAdjustmentDraftPolicy.retainedSelection(
+            pendingReminderAdjustmentSelection,
+            in: restored
+        )
         appModel.shouldResumeChatComposer = false
+        appModel.chatComposerResumeSource = nil
         isComposerFocused = true
         composerFocusRequestID = UUID()
         composerFocusBridge.focus()
-        runtimeNotice = RuntimeNotice(
-            text: "模型已保存，你可以继续发送刚才那条消息了。",
-            tone: .success
+        if source == .modelSetup {
+            runtimeNotice = RuntimeNotice(
+                text: "设置已保存，可以继续刚才的消息了。",
+                tone: .success
+            )
+        }
+    }
+
+    private func takeReminderAdjustmentSelection(
+        forSending content: String
+    ) -> ReminderAdjustmentSelection? {
+        let selection = ReminderAdjustmentDraftPolicy.retainedSelection(
+            pendingReminderAdjustmentSelection,
+            in: content
         )
+        pendingReminderAdjustmentSelection = nil
+        return selection
+    }
+
+    private func recordExplicitReminderSelection(
+        _ selection: ReminderAdjustmentSelection,
+        sessionID: UUID,
+        sourceMessageID: UUID
+    ) {
+        let store = AgentSessionContextStore.shared
+        let existing = store.context(for: sessionID)?.references ?? .empty
+        let references = AgentReferenceRecorder().recording(
+            .selected(
+                reminderID: selection.reminderID,
+                sourceMessageID: sourceMessageID
+            ),
+            in: existing
+        )
+        store.update(sessionID: sessionID, references: references)
     }
 
     private func pendingAssistantReply(for result: MockAgentResult) -> String {
@@ -2987,50 +3226,14 @@ struct ChatHomeView: View {
     private var chatBackground: some View {
         LinearGradient(
             colors: [
-                Color(red: 0.98, green: 0.96, blue: 0.92),
-                Color(red: 0.95, green: 0.97, blue: 0.99)
+                AIGTDColor.background,
+                AIGTDColor.brand.opacity(0.055)
             ],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
         )
     }
 
-    private func keyboardInsetValue(from notification: Notification) -> CGFloat {
-        guard
-            let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
-            let window = activeKeyboardWindow()
-        else {
-            return 0
-        }
-
-        let converted = window.convert(frame, from: nil)
-        let intersection = window.bounds.intersection(converted)
-        return max(0, intersection.height - window.safeAreaInsets.bottom)
-    }
-
-    private func activeKeyboardWindow() -> UIWindow? {
-        if let composerWindow = composerFocusBridge.textView?.window {
-            return composerWindow
-        }
-
-        let scenes = UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .filter { $0.activationState == .foregroundActive || $0.activationState == .foregroundInactive }
-
-        for scene in scenes {
-            if let keyWindow = scene.windows.first(where: \.isKeyWindow) {
-                return keyWindow
-            }
-        }
-
-        for scene in scenes {
-            if let firstWindow = scene.windows.first {
-                return firstWindow
-            }
-        }
-
-        return nil
-    }
 }
 
 private struct ModelSetupPrompt: Identifiable {
@@ -3856,6 +4059,7 @@ private struct ChatIntroCard: View {
     let runtimeNotice: RuntimeNotice?
 
     var body: some View {
+#if DEBUG || INTERNAL
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Label(
@@ -3894,6 +4098,17 @@ private struct ChatIntroCard: View {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .fill(.ultraThinMaterial)
         )
+#else
+        if let runtimeNotice, runtimeNotice.tone.shouldShowPublicly {
+            Label(runtimeNotice.publicText, systemImage: runtimeNotice.tone.iconName)
+                .font(.footnote)
+                .foregroundStyle(runtimeNotice.tone.color)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .textSelection(.enabled)
+        }
+#endif
     }
 }
 
@@ -3943,6 +4158,7 @@ private struct StarterPromptsCard: View {
 
 private struct ChatMessageRow: View {
     let message: ChatMessage
+    let streamingText: String?
     let actionLog: ActionLog?
     let onPrimaryAction: (ActionLog) -> Void
     let onAdjustAction: (ActionLog) -> Void
@@ -3958,7 +4174,7 @@ private struct ChatMessageRow: View {
             }
 
             VStack(alignment: isUserMessage ? .trailing : .leading, spacing: 6) {
-                Text(isUserMessage ? "你" : "AIGTD")
+                Text(isUserMessage ? "你" : "小满")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -3979,7 +4195,7 @@ private struct ChatMessageRow: View {
                     .background(bubbleBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                 } else {
-                    Text(message.text)
+                    Text(renderedText)
                         .font(.body)
                         .foregroundStyle(isUserMessage ? .white : .primary)
                         .padding(.horizontal, 14)
@@ -3989,7 +4205,7 @@ private struct ChatMessageRow: View {
                         .textSelection(.enabled)
                         .contextMenu {
                             Button("复制这条消息") {
-                                UIPasteboard.general.string = message.text
+                                UIPasteboard.general.string = renderedText
                                 showsCopiedToast = true
                             }
                         }
@@ -4003,17 +4219,17 @@ private struct ChatMessageRow: View {
                 }
 
                 if let actionLog, shouldShowActionCard(for: actionLog) {
-                    Group {
-                        ActionResultCardView(
-                            log: actionLog,
-                            onPrimaryAction: { onPrimaryAction(actionLog) },
-                            onAdjustAction: { onAdjustAction(actionLog) },
-                            onCancelAction: { onCancelAction(actionLog) }
-                        )
-                        .transition(.opacity)
-                    }
+                    ActionResultCardView(
+                        log: actionLog,
+                        onPrimaryAction: { onPrimaryAction(actionLog) },
+                        onAdjustAction: { onAdjustAction(actionLog) },
+                        onCancelAction: { onCancelAction(actionLog) }
+                    )
+                    .id(actionLog.id)
+                    .transition(.opacity)
+                    .contentTransition(.interpolate)
                     .padding(.top, 2)
-                    .animation(.easeInOut(duration: 0.22), value: actionLog.executionStatus)
+                    .animation(.smooth(duration: 0.22), value: actionLog.executionStatus)
                 }
             }
             .frame(maxWidth: .infinity, alignment: isUserMessage ? .trailing : .leading)
@@ -4044,6 +4260,10 @@ private struct ChatMessageRow: View {
         message.role == "user"
     }
 
+    private var renderedText: String {
+        streamingText ?? message.text
+    }
+
     private var shouldShowActionSummary: Bool {
         guard let actionLog else { return false }
         return shouldShowActionCard(for: actionLog)
@@ -4052,7 +4272,7 @@ private struct ChatMessageRow: View {
     private var shouldShowStreamingPlaceholder: Bool {
         isUserMessage == false &&
         message.status == "streaming" &&
-        message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        renderedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func shouldShowActionCard(for log: ActionLog) -> Bool {
@@ -4074,10 +4294,10 @@ private struct ChatMessageRow: View {
     private var avatar: some View {
         ZStack {
             Circle()
-                .fill(isUserMessage ? Color.accentColor.opacity(0.18) : Color.orange.opacity(0.18))
-            Text(isUserMessage ? "你" : "AI")
+                .fill(isUserMessage ? AIGTDColor.brand.opacity(0.16) : AIGTDColor.assistantAccent.opacity(0.18))
+            Text(isUserMessage ? "你" : "满")
                 .font(.caption.bold())
-                .foregroundStyle(isUserMessage ? Color.accentColor : Color.orange)
+                .foregroundStyle(isUserMessage ? AIGTDColor.brand : AIGTDColor.assistantAccent)
         }
         .frame(width: 32, height: 32)
     }
@@ -4088,7 +4308,7 @@ private struct ChatMessageRow: View {
                 LinearGradient(
                     colors: [
                         Color.accentColor,
-                        Color.accentColor.opacity(0.78)
+                        AIGTDColor.brand.opacity(0.78)
                     ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
@@ -4096,8 +4316,8 @@ private struct ChatMessageRow: View {
             } else {
                 LinearGradient(
                     colors: [
-                        Color.white.opacity(0.95),
-                        Color(red: 0.97, green: 0.98, blue: 0.99)
+                        AIGTDColor.surface.opacity(0.98),
+                        AIGTDColor.raisedSurface.opacity(0.96)
                     ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
@@ -4111,139 +4331,123 @@ private struct ChatComposer: View {
     @Binding var draft: String
     let isSending: Bool
     let isStreamingReply: Bool
-    let isVoicePrimed: Bool
-    let isRecordingVoice: Bool
-    let isTranscribingVoice: Bool
-    let isFinalizingVoice: Bool
-    let tailHighlightLength: Int
-    let tailAnimatedDotsCount: Int
+    @ObservedObject var voiceState: VoiceInteractionState
+    let voiceConfiguration: VoiceTranscriptionConfiguration?
     @Binding var focusRequestID: UUID
     @Binding var isFocused: Bool
     @ObservedObject var focusBridge: ComposerTextViewFocusBridge
-    let onToggleVoice: () -> Void
     let onSend: () -> Void
-    let onVoiceInputTakeoverByKeyboard: () -> Void
+    let onVoiceUnavailable: () -> Void
     @State private var composerHeight: CGFloat = 44
     private let composerHorizontalPadding: CGFloat = 12
     private let composerVerticalPadding: CGFloat = 0
-    private let textContainerInset = UIEdgeInsets(top: 13, left: 14, bottom: 13, right: 14)
+    private let textContainerInset = UIEdgeInsets(top: 13, left: 4, bottom: 13, right: 8)
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 12) {
-            ZStack(alignment: .topLeading) {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(composerFieldBackground)
-
-                GrowingComposerTextView(
-                    text: $draft,
-                    focusRequestID: $focusRequestID,
-                    isFocused: $isFocused,
-                    focusBridge: focusBridge,
-                    measuredHeight: $composerHeight,
-                    tailHighlightLength: tailHighlightLength,
-                    tailAnimatedDotsCount: tailAnimatedDotsCount,
-                    textContainerInset: textContainerInset,
-                    shouldHideCaret: isVoicePrimed || isRecordingVoice || isTranscribingVoice,
-                    // Keep keyboard alive during voice input. Making UITextView non-editable
-                    // causes iOS to resign first responder and collapse the keyboard.
-                    isEditable: true,
-                    isVoiceInputActive: isVoicePrimed || isRecordingVoice || isTranscribingVoice,
-                    onVoiceInputTakeoverByKeyboard: onVoiceInputTakeoverByKeyboard
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .padding(.horizontal, composerHorizontalPadding)
-                .padding(.vertical, composerVerticalPadding)
-
-                if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text(placeholderText)
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, composerHorizontalPadding + textContainerInset.left)
-                        .padding(.top, composerVerticalPadding + textContainerInset.top)
-                        .allowsHitTesting(false)
-                }
+        HStack(alignment: .bottom, spacing: 10) {
+            if trimmedDraft.isEmpty {
+                composerField(microphoneHandlesHold: false)
+                    .voiceHoldToTalk(
+                        state: voiceState,
+                        configuration: voiceConfiguration,
+                        draft: $draft,
+                        onUnavailable: onVoiceUnavailable
+                    )
+            } else {
+                composerField(microphoneHandlesHold: true)
             }
-            .frame(height: max(44, composerHeight))
-            .animation(
-                shouldAnimateComposerHeight ? .easeOut(duration: 0.14) : nil,
-                value: composerHeight
-            )
-            .contentShape(Rectangle())
 
-            ComposerAccessoryButton(
-                mode: accessoryMode,
-                isDisabled: accessoryButtonDisabled,
-                onTap: accessoryButtonAction
-            )
-            .frame(width: 44, height: 44)
+            if trimmedDraft.isEmpty == false {
+                ComposerAccessoryButton(
+                    mode: .send,
+                    isDisabled: isSending || isStreamingReply,
+                    onTap: onSend
+                )
+                .frame(width: 44, height: 44)
+                .transition(.scale.combined(with: .opacity))
+            }
         }
         .padding(.horizontal, 16)
         .padding(.top, 12)
         .padding(.bottom, 12)
         .background(.ultraThinMaterial)
-    }
-
-    private var placeholderText: String {
-        if isVoicePrimed {
-            return "请说话…"
-        }
-        if isRecordingVoice {
-            return "请说话…"
-        }
-        if isTranscribingVoice {
-            return "正在识别…"
-        }
-        if isFinalizingVoice {
-            return "正在整理这句话…"
-        }
-        return "直接告诉我你要做什么"
-    }
-
-    private var composerFieldBackground: Color {
-        if isFinalizingVoice {
-            return Color.blue.opacity(0.12)
-        }
-        return Color.white.opacity(0.94)
-    }
-
-    private var shouldAnimateComposerHeight: Bool {
-        !(isVoicePrimed || isRecordingVoice || isTranscribingVoice || isFinalizingVoice)
+        .animation(.easeOut(duration: 0.16), value: trimmedDraft.isEmpty)
     }
 
     private var trimmedDraft: String {
         draft.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private var isVoiceControlActive: Bool {
-        isVoicePrimed || isRecordingVoice || isTranscribingVoice || isFinalizingVoice
+    @ViewBuilder
+    private func composerField(microphoneHandlesHold: Bool) -> some View {
+        HStack(alignment: .bottom, spacing: 2) {
+            if microphoneHandlesHold {
+                microphoneButton
+                    .voiceHoldToTalk(
+                        state: voiceState,
+                        configuration: voiceConfiguration,
+                        draft: $draft,
+                        onUnavailable: onVoiceUnavailable
+                    )
+            } else {
+                microphoneButton
+            }
+
+            ZStack(alignment: .topLeading) {
+                GrowingComposerTextView(
+                    text: $draft,
+                    focusRequestID: $focusRequestID,
+                    isFocused: $isFocused,
+                    focusBridge: focusBridge,
+                    measuredHeight: $composerHeight,
+                    tailHighlightLength: 0,
+                    tailAnimatedDotsCount: 0,
+                    textContainerInset: textContainerInset,
+                    shouldHideCaret: false,
+                    isEditable: true,
+                    isVoiceInputActive: false,
+                    onVoiceInputTakeoverByKeyboard: {}
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(.trailing, composerHorizontalPadding)
+                .padding(.vertical, composerVerticalPadding)
+
+                if trimmedDraft.isEmpty {
+                    Text(VoiceInteractionState.composerPrompt)
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                        .padding(.leading, textContainerInset.left)
+                        .padding(.top, textContainerInset.top)
+                        .allowsHitTesting(false)
+                }
+            }
+        }
+        .padding(.leading, 4)
+        .frame(height: max(44, composerHeight))
+        .background(AIGTDColor.surface.opacity(0.96), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(Color.black.opacity(0.035))
+        }
+        .animation(.easeOut(duration: 0.14), value: composerHeight)
+        .contentShape(Rectangle())
     }
 
-    private var accessoryMode: ComposerAccessoryButton.Mode {
-        if isVoiceControlActive {
-            return .stop
+    private var microphoneButton: some View {
+        Button {
+            isFocused = false
+            focusBridge.blur()
+        } label: {
+            Image(systemName: "waveform.circle")
+                .font(.system(size: 25, weight: .medium))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
         }
-        if trimmedDraft.isEmpty == false {
-            return .send
-        }
-        return .voice
-    }
-
-    private var accessoryButtonDisabled: Bool {
-        switch accessoryMode {
-        case .send:
-            return isSending || isStreamingReply
-        case .voice, .stop:
-            return isSending || isFinalizingVoice
-        }
-    }
-
-    private var accessoryButtonAction: () -> Void {
-        switch accessoryMode {
-        case .send:
-            return onSend
-        case .voice, .stop:
-            return onToggleVoice
-        }
+        .buttonStyle(.plain)
+        .disabled(isSending || voiceState.phase == .finalizing)
+        .accessibilityLabel("按住说话")
+        .accessibilityHint("按住开始录音，松手后文字进入输入框")
     }
 }
 
@@ -4307,7 +4511,7 @@ private struct GrowingComposerTextView: UIViewRepresentable {
         textView.isSelectable = true
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         focusBridge.textView = textView
-        context.coordinator.recalculateHeight(for: textView, immediate: true)
+        context.coordinator.scheduleHeightUpdate(for: textView)
         return textView
     }
 
@@ -4334,13 +4538,7 @@ private struct GrowingComposerTextView: UIViewRepresentable {
         context.coordinator.isVoiceInputActive = isVoiceInputActive
 
         if didUpdateText || didBoundsChange {
-            context.coordinator.recalculateHeight(for: uiView, immediate: true)
-            context.coordinator.scrollToBottomIfNeeded(for: uiView)
-            DispatchQueue.main.async { [weak uiView, weak coordinator = context.coordinator] in
-                guard let uiView, let coordinator else { return }
-                coordinator.recalculateHeight(for: uiView, immediate: true)
-                coordinator.scrollToBottomIfNeeded(for: uiView)
-            }
+            context.coordinator.scheduleHeightUpdate(for: uiView)
         }
         context.coordinator.applyFocusIfNeeded(for: uiView, requestID: focusRequestID)
 
@@ -4360,9 +4558,9 @@ private struct GrowingComposerTextView: UIViewRepresentable {
         private var lastFocusRequestID = UUID()
         private var lastRenderedDisplayText = ""
         private var isApplyingDisplayUpdate = false
-        private var cachedShouldScroll = false
         private var lastKnownWidth: CGFloat = 0
         private var hasPendingVoiceTakeoverDotCleanup = false
+        private var heightUpdateScheduled = false
 
         init(
             text: Binding<String>,
@@ -4390,8 +4588,7 @@ private struct GrowingComposerTextView: UIViewRepresentable {
 
         func textViewDidChange(_ textView: UITextView) {
             if isApplyingDisplayUpdate {
-                recalculateHeight(for: textView, immediate: true)
-                scrollToBottomIfNeeded(for: textView)
+                scheduleHeightUpdate(for: textView)
                 return
             }
             let rawText = textView.text ?? ""
@@ -4415,8 +4612,7 @@ private struct GrowingComposerTextView: UIViewRepresentable {
             _ = noteBoundsChange(for: textView)
             text = committedText
             lastRenderedDisplayText = committedText
-            recalculateHeight(for: textView, immediate: true)
-            scrollToBottomIfNeeded(for: textView)
+            scheduleHeightUpdate(for: textView)
         }
 
         func textView(
@@ -4461,10 +4657,8 @@ private struct GrowingComposerTextView: UIViewRepresentable {
                 forCharacterRange: NSRange(location: 0, length: textView.textStorage.length),
                 actualCharacterRange: nil
             )
-            textView.layoutManager.ensureLayout(for: textView.textContainer)
             textView.invalidateIntrinsicContentSize()
             textView.setNeedsLayout()
-            textView.layoutIfNeeded()
 
             if shouldShowDots {
                 textView.selectedRange = NSRange(location: text.count, length: 0)
@@ -4491,16 +4685,21 @@ private struct GrowingComposerTextView: UIViewRepresentable {
             return true
         }
 
-        func recalculateHeight(for textView: UITextView, immediate: Bool = false) {
+        func scheduleHeightUpdate(for textView: UITextView) {
+            guard heightUpdateScheduled == false else { return }
+            heightUpdateScheduled = true
+            DispatchQueue.main.async { [weak self, weak textView] in
+                guard let self else { return }
+                self.heightUpdateScheduled = false
+                guard let textView else { return }
+                self.recalculateHeight(for: textView)
+            }
+        }
+
+        private func recalculateHeight(for textView: UITextView) {
             _ = noteBoundsChange(for: textView)
             let targetWidth = max(textView.bounds.width, lastKnownWidth)
-            guard targetWidth > 1 else {
-                DispatchQueue.main.async { [weak textView] in
-                    guard let textView else { return }
-                    self.recalculateHeight(for: textView, immediate: immediate)
-                }
-                return
-            }
+            guard targetWidth > 1 else { return }
 
             syncTextContainerWidth(for: textView)
             textView.layoutManager.ensureLayout(for: textView.textContainer)
@@ -4509,32 +4708,18 @@ private struct GrowingComposerTextView: UIViewRepresentable {
             let clamped = min(max(minHeight, rawHeight), maxHeight)
 
             if abs(measuredHeight - clamped) > 0.5 {
-                let applyHeight = { self.measuredHeight = clamped }
-                if immediate {
-                    applyHeight()
-                } else {
-                    DispatchQueue.main.async {
-                        applyHeight()
-                    }
-                }
+                measuredHeight = clamped
             }
 
             let shouldScroll = rawHeight > maxHeight + 0.5
             if textView.isScrollEnabled != shouldScroll {
                 textView.isScrollEnabled = shouldScroll
             }
-            cachedShouldScroll = shouldScroll
-
             if shouldScroll {
                 scrollToBottomAligned(for: textView)
             } else if textView.contentOffset.y != 0 {
                 textView.setContentOffset(.zero, animated: false)
             }
-        }
-
-        func scrollToBottomIfNeeded(for textView: UITextView) {
-            guard cachedShouldScroll || textView.isScrollEnabled else { return }
-            scrollToBottomAligned(for: textView)
         }
 
         func applyFocusIfNeeded(for textView: UITextView, requestID: UUID) {
@@ -4659,12 +4844,24 @@ private final class ComposerTextViewFocusBridge: ObservableObject {
 private struct RuntimeNotice {
     let text: String
     let tone: RuntimeNoticeTone
+
+    var publicText: String {
+        if text.localizedCaseInsensitiveContains("模型") ||
+            text.localizedCaseInsensitiveContains("API") {
+            return "小满暂时没有连接好，请稍后再试。"
+        }
+        return text
+    }
 }
 
 private enum RuntimeNoticeTone {
     case info
     case success
     case warning
+
+    var shouldShowPublicly: Bool {
+        self == .warning
+    }
 
     var color: Color {
         switch self {

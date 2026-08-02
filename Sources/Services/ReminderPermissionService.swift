@@ -31,8 +31,27 @@ struct ReminderItemInfo: Identifiable, Hashable, Sendable {
     let title: String
     let notes: String
     let dueDate: Date?
+    let listID: String
     let listTitle: String
     let isCompleted: Bool
+
+    init(
+        id: String,
+        title: String,
+        notes: String,
+        dueDate: Date?,
+        listID: String = "",
+        listTitle: String,
+        isCompleted: Bool
+    ) {
+        self.id = id
+        self.title = title
+        self.notes = notes
+        self.dueDate = dueDate
+        self.listID = listID
+        self.listTitle = listTitle
+        self.isCompleted = isCompleted
+    }
 }
 
 struct ReminderCreateInput: Sendable {
@@ -521,6 +540,7 @@ struct ReminderStoreService {
                         title: reminder.title,
                         notes: reminder.notes ?? "",
                         dueDate: reminder.dueDateComponents?.date,
+                        listID: reminder.calendar.calendarIdentifier,
                         listTitle: reminder.calendar.title,
                         isCompleted: reminder.isCompleted
                     )

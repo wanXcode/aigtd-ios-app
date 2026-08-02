@@ -4,6 +4,205 @@ import EventKit
 import AVFoundation
 import UIKit
 
+struct PublicSettingsView: View {
+    @Environment(AppModel.self) private var appModel
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var microphonePermission = AVAudioApplication.shared.recordPermission
+
+    var body: some View {
+        List {
+            Section {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("小满", systemImage: "checkmark.message.fill")
+                        .font(.title3.bold())
+                        .foregroundStyle(.blue)
+                    Text("温和、可靠地帮你查看和处理 Apple Reminders 中的事务。")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 6)
+            }
+
+            Section("权限") {
+                permissionRow(
+                    title: "提醒事项",
+                    value: remindersPermissionStatusText,
+                    detail: remindersPermissionHint
+                )
+
+                if appModel.reminderPermissionStatus == .notDetermined {
+                    Button("允许访问提醒事项") {
+                        Task {
+                            await appModel.requestReminderPermission()
+                            await appModel.refreshReminderPermission()
+                        }
+                    }
+                } else if shouldOpenSettingsForReminders {
+                    Button("在系统设置中开启提醒事项") {
+                        openSystemSettings()
+                    }
+                }
+
+                permissionRow(
+                    title: "语音输入",
+                    value: microphonePermissionStatusText,
+                    detail: microphonePermissionHint
+                )
+
+                if microphonePermission == .denied {
+                    Button("在系统设置中开启麦克风") {
+                        openSystemSettings()
+                    }
+                }
+            }
+
+            Section {
+                NavigationLink {
+                    AgentContextPrivacyView()
+                } label: {
+                    Label("偏好、长期记忆与上下文", systemImage: "hand.raised")
+                }
+            } header: {
+                Text("小满与隐私")
+            } footer: {
+                Text("你可以查看或清除小满记住的长期偏好和当前会话上下文，不会因此删除聊天或提醒事项。")
+            }
+
+            Section("关于") {
+                LabeledContent("版本", value: appVersionText)
+                Button("发送反馈") {
+                    guard let url = URL(string: "mailto:vq8@qq.com?subject=AIGTD%20反馈") else { return }
+                    openURL(url)
+                }
+            }
+
+#if DEBUG || INTERNAL
+            Section {
+                NavigationLink {
+                    AgentHomeView()
+                } label: {
+                    Label("开发者工具", systemImage: "hammer")
+                }
+            } header: {
+                Text("内部开发")
+            } footer: {
+                Text("此入口只存在于 Debug 或 Internal 构建。")
+            }
+#endif
+        }
+        .navigationTitle("设置")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("完成") { dismiss() }
+            }
+        }
+        .task {
+            await refreshPermissions()
+        }
+        .onChange(of: scenePhase) { _, newValue in
+            guard newValue == .active else { return }
+            Task {
+                await refreshPermissions()
+            }
+        }
+    }
+
+    private func permissionRow(title: String, value: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            LabeledContent(title, value: value)
+            Text(detail)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 3)
+    }
+
+    private var appVersionText: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "-"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "-"
+        return "\(version) (\(build))"
+    }
+
+    private var shouldOpenSettingsForReminders: Bool {
+        switch appModel.reminderPermissionStatus {
+        case .denied, .restricted:
+            true
+        default:
+            false
+        }
+    }
+
+    private var remindersPermissionStatusText: String {
+        switch appModel.reminderPermissionStatus {
+        case .fullAccess, .writeOnly, .authorized:
+            "已允许"
+        case .notDetermined:
+            "尚未询问"
+        case .denied:
+            "已拒绝"
+        case .restricted:
+            "受限制"
+        @unknown default:
+            "未知"
+        }
+    }
+
+    private var remindersPermissionHint: String {
+        switch appModel.reminderPermissionStatus {
+        case .fullAccess, .writeOnly, .authorized:
+            "小满可以读取并按你的明确请求更新提醒事项。"
+        case .notDetermined:
+            "允许后才能通过对话创建和调整任务。"
+        case .denied:
+            "需要在系统设置中重新开启，任务读写才能恢复。"
+        case .restricted:
+            "当前设备限制了提醒事项权限。"
+        @unknown default:
+            "请在系统设置中检查权限状态。"
+        }
+    }
+
+    private var microphonePermissionStatusText: String {
+        switch microphonePermission {
+        case .granted:
+            "已允许"
+        case .undetermined:
+            "使用时询问"
+        case .denied:
+            "已拒绝"
+        @unknown default:
+            "未知"
+        }
+    }
+
+    private var microphonePermissionHint: String {
+        switch microphonePermission {
+        case .granted:
+            "可以使用按住说话。语音转成草稿后由你确认发送。"
+        case .undetermined:
+            "第一次使用语音时再请求权限，不会提前打扰你。"
+        case .denied:
+            "需要在系统设置中开启后才能使用语音输入。"
+        @unknown default:
+            "请在系统设置中检查权限状态。"
+        }
+    }
+
+    private func refreshPermissions() async {
+        microphonePermission = AVAudioApplication.shared.recordPermission
+        await appModel.refreshReminderPermission()
+    }
+
+    private func openSystemSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        openURL(url)
+    }
+}
+
+#if DEBUG || INTERNAL
 struct AgentHomeView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.modelContext) private var modelContext
@@ -622,3 +821,4 @@ private extension AgentTraceStageStatus {
         }
     }
 }
+#endif

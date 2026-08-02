@@ -1047,41 +1047,39 @@ struct AgentRuntimeService {
             switch runtimeError {
             case .invalidConfiguration:
                 return (
-                    "还没连上可用模型，先去 Agent 页把模型配置完整再发这条消息。",
-                    "模型配置不完整",
-                    "至少需要 provider、model、API key 这三项。"
+                    "小满暂时还没有连接好，请稍后再试。",
+                    "服务暂时不可用",
+                    nil
                 )
-            case let .invalidPayload(bodySummary):
-                let trimmedSummary = bodySummary.trimmingCharacters(in: .whitespacesAndNewlines)
-                let debugLine = trimmedSummary.isEmpty ? "" : "\n返回摘要：\(trimmedSummary)"
+            case .invalidPayload:
                 return (
-                    "远端模型已经连上了，但这次返回内容不是当前 Chat 能直接吃下来的格式。\(debugLine)",
-                    "远端返回格式暂未兼容",
-                    trimmedSummary.isEmpty ? "我下一步会按这个 provider 的真实返回继续兼容。" : "我已经把返回摘要带出来了，按这段继续兼容就行。"
+                    "这次没有理解完整，请换一种说法再试一次。",
+                    "这次没有完成",
+                    nil
                 )
-            case let .httpStatus(statusCode, body):
+            case .httpStatus:
                 return (
-                    "远端模型这次回了 HTTP \(statusCode)。",
-                    "远端请求失败：HTTP \(statusCode)",
-                    body.isEmpty ? "你可以先去 Agent 里再测一次连接。" : body
+                    "小满的服务暂时有点忙，请稍后再试。",
+                    "服务暂时不可用",
+                    nil
                 )
             default:
                 break
             }
         }
 
-        if let urlError = error as? URLError {
+        if error is URLError {
             return (
-                "远端模型这次网络请求没走通，哥哥稍后再试一下。",
-                "远端网络请求失败",
-                urlError.localizedDescription
+                "网络连接没有成功，请检查网络后再试。",
+                "网络连接失败",
+                nil
             )
         }
 
         return (
-            "远端模型这次没有正常完成回复。",
-            "远端模型暂时不可用",
-            String(describing: error)
+            "小满这次没有处理完成，请稍后再试。",
+            "服务暂时不可用",
+            nil
         )
     }
 
@@ -1214,18 +1212,15 @@ private enum AgentRuntimeError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidURL:
-            return "请求地址无效，请检查 Base URL。"
+            return "服务暂时不可用，请稍后再试。"
         case .invalidResponse:
-            return "服务返回了无法识别的响应。"
-        case let .invalidPayload(bodySummary):
-            if bodySummary.isEmpty {
-                return "服务返回成功，但内容格式不是当前 App 可解析的结果。"
-            }
-            return "服务返回成功，但内容格式不是当前 App 可解析的结果。返回摘要：\(bodySummary)"
+            return "这次没有处理完成，请稍后再试。"
+        case .invalidPayload:
+            return "这次没有理解完整，请换一种说法再试一次。"
         case .invalidConfiguration:
-            return "模型配置不完整。"
-        case let .httpStatus(statusCode, body):
-            return "HTTP \(statusCode)：\(body)"
+            return "服务暂时不可用，请稍后再试。"
+        case .httpStatus:
+            return "服务暂时有点忙，请稍后再试。"
         }
     }
 }

@@ -1,6 +1,7 @@
 import SwiftData
 import SwiftUI
 
+#if DEBUG || INTERNAL
 struct ModelSettingsView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.dismiss) private var dismiss
@@ -513,3 +514,4 @@ private enum WireAPIPreset: String, CaseIterable, Identifiable {
         }
     }
 }
+#endif

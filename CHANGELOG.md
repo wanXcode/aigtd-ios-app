@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.7.0 (21) - TestFlight Candidate
+
+`0.7.0` upgrades the existing reliable task capabilities into a public-facing product experience without expanding the smart-planning scope.
+
+### Experience updates
+
+- introduce Xiaoman as the default AIGTD assistant and add a one-time welcome experience
+- reduce the public navigation to AIGTD and Tasks
+- rebuild chat viewport ownership, keyboard interaction, growing input, streaming rendering, and in-place action-card transitions
+- add press-and-hold voice input with live transcription, slide-up cancellation, and editable drafts that never auto-send
+- redesign Tasks as a read-only AIGTD overview that remains visually distinct from Apple Reminders
+- preserve system list ordering where EventKit exposes it and keep empty lists visible
+- remove model, endpoint, API key, prompt, and diagnostics controls from public Release builds
+- add the warm AIGTD visual system, Dynamic Type, VoiceOver, Reduce Motion, and interruption-safe draft recovery
+
+### Fixed
+
+- fixed voice permission, cancellation, interruption, and late-finalization races so cancelled recordings cannot overwrite the draft
+- fixed same-title reminder lists being merged in the read-only overview and kept each list's session order stable
+- fixed stale reminder context leaking into unrelated Chat turns after returning from task details
+- fixed denied Reminders permission advancing onboarding as if access had succeeded
+- fixed stale cached tasks appearing current after a reminder refresh failure
+
+### Safety
+
+- removed local secret resources and developer-facing model, endpoint, API key, prompt, and diagnostics controls from the Release product
+- kept voice transcription as an editable draft after release; voice input never auto-sends or bypasses task confirmation
+- retained ambiguity, stale-state, confirmation, partial-failure, and undo protections from `0.6.0`
+
+### Validation
+
+- generic iOS Simulator and generic iOS `build-for-testing` succeed for the app and 374 XCTest methods
+- generic iOS Release build and static analysis succeed
+- `git diff --check`, Release developer-copy scan, and sensitive-resource scan succeed
+- full XCTest execution remains pending because Xcode 26.2 cannot run the installed iOS 26.3 simulator and the third-party speech Pods exclude arm64 simulator builds
+- the signed `0.7.0 (21)` archive succeeds and its team, bundle ID, version, architecture, and packaged resources pass inspection
+- TestFlight upload is pending restoration of the App Store Connect account in Xcode
+- TestFlight upload and in-place upgrade acceptance are recorded in `docs/releases/v0.7.0-test-plan.md`
+
 ## 0.6.0 - 2026-08-02
 
 `0.6.0 (20)` completes the natural confirmation, recovery, and reversible-action development scope. Final iPhone and TestFlight upgrade acceptance passed.

@@ -4,50 +4,36 @@ import UIKit
 struct RemindersOverviewView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(\.openURL) private var openURL
+    @Environment(\.colorScheme) private var colorScheme
 
     @State private var pendingFocusID: String?
-    @State private var processingReminderIDs: Set<String> = []
-    @State private var reminderPendingDeletion: ReminderItemInfo?
 
     var body: some View {
         ScrollViewReader { proxy in
             ZStack {
-                Color(.systemGroupedBackground).ignoresSafeArea()
+                overviewBackground.ignoresSafeArea()
 
                 if appModel.remindersAccessGranted == false {
                     permissionState
-                } else if appModel.isLoadingReminderLists && groupedActiveSections.isEmpty {
+                } else if appModel.isLoadingReminderLists && overviewSections.isEmpty {
                     loadingState
                 } else if appModel.reminderListsErrorMessage.isEmpty == false && appModel.reminderLists.isEmpty {
                     errorState(proxy: proxy)
                 } else if appModel.reminderLists.isEmpty {
-                    starterTemplateState(proxy: proxy)
-                } else if groupedActiveSections.isEmpty {
-                    emptyState(proxy: proxy)
+                    noListsState(proxy: proxy)
                 } else {
                     dashboardContent(proxy: proxy)
                 }
             }
-            .navigationTitle("全部")
+            .navigationTitle("任务")
             .navigationBarTitleDisplayMode(.large)
             .task {
                 await refreshDashboard(using: proxy, refreshPermission: true)
             }
-            .confirmationDialog("删除这条提醒事项？", isPresented: deleteDialogBinding, titleVisibility: .visible) {
-                if let item = reminderPendingDeletion {
-                    Button("删除", role: .destructive) {
-                        performDelete(item, using: proxy)
-                    }
-                }
-            } message: {
-                if let item = reminderPendingDeletion {
-                    Text("“\(item.title)”会从系统 Reminders 中删除。")
-                }
-            }
             .onChange(of: pendingFocusID) { _, newValue in
                 guard let newValue else { return }
                 DispatchQueue.main.async {
-                    withAnimation(.easeOut(duration: 0.25)) {
+                    withAnimation(.easeOut(duration: 0.22)) {
                         proxy.scrollTo(newValue, anchor: .center)
                     }
                 }
@@ -55,81 +41,122 @@ struct RemindersOverviewView: View {
         }
     }
 
+    private var overviewSections: [ReminderOverviewSection] {
+        ReminderOverviewPolicy.sections(
+            lists: appModel.reminderLists,
+            items: appModel.reminderItems
+        )
+    }
+
     private func dashboardContent(proxy: ScrollViewProxy) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                VStack(alignment: .leading, spacing: 10) {
-                    TimelineView(.periodic(from: .now, by: 1)) { timeline in
-                        Text(syncSectionTitle(at: timeline.date))
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                    }
+            LazyVStack(alignment: .leading, spacing: 18) {
+                overviewHeader
 
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(groupedActiveSections) { section in
-                            ReminderGroupSectionView(
-                                section: section,
-                                pendingFocusID: pendingFocusID,
-                                processingReminderIDs: processingReminderIDs,
-                                color: color(for: section.title),
-                                dueDescriptor: dueDescriptor(for:),
-                                onToggleCompletion: { item in
-                                    performToggle(for: item, using: proxy)
-                                },
-                                onDelete: { item in
-                                    reminderPendingDeletion = item
-                                }
-                            )
-                        }
-                    }
+                if appModel.reminderListsErrorMessage.isEmpty == false {
+                    syncFailureBanner(proxy: proxy)
+                }
+
+                ForEach(overviewSections) { section in
+                    ReminderOverviewListCard(
+                        section: section,
+                        pendingFocusID: pendingFocusID,
+                        accent: accentColor(for: section.title)
+                    )
                 }
             }
-            .padding(.horizontal, 18)
-            .padding(.top, 12)
-            .padding(.bottom, 28)
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            .padding(.bottom, 30)
         }
         .refreshable {
             await refreshDashboard(using: proxy, refreshPermission: true)
         }
     }
 
-    private var groupedActiveSections: [ReminderGroupSection] {
-        let activeItems = appModel.reminderItems
-            .filter { $0.isCompleted == false }
+    private var overviewHeader: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(Color(red: 0.94, green: 0.48, blue: 0.19))
+                    .frame(width: 40, height: 40)
+                    .background(
+                        Circle()
+                            .fill(Color(red: 1.0, green: 0.86, blue: 0.70).opacity(0.48))
+                    )
 
-        let grouped = Dictionary(grouping: activeItems) { normalizedListTitle($0.listTitle) }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("AIGTD 任务概览")
+                        .font(.headline.weight(.bold))
+                    Text("来自 Apple 提醒事项")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
 
-        let orderedKnownLists = appModel.reminderLists.map { list in
-            let key = normalizedListTitle(list.title)
-            return ReminderGroupSection(
-                title: list.title,
-                items: (grouped[key] ?? []).sorted(by: reminderSort)
-            )
-        }
-
-        let knownKeys = Set(appModel.reminderLists.map { normalizedListTitle($0.title) })
-        let remaining = grouped
-            .filter { knownKeys.contains($0.key) == false }
-            .map { key, items in
-                ReminderGroupSection(
-                    title: displayListTitle(for: key, fallbackItems: items),
-                    items: items.sorted(by: reminderSort)
-                )
+                Spacer(minLength: 0)
             }
-            .sorted { $0.title.localizedCompare($1.title) == .orderedAscending }
 
-        return orderedKnownLists + remaining
+            Text("这里用于确认任务状态。需要修改时，让小满来处理。")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            TimelineView(.periodic(from: .now, by: 1)) { timeline in
+                Label(
+                    ReminderOverviewPolicy.syncDescription(
+                        isLoading: appModel.isLoadingReminderLists,
+                        lastSyncAt: appModel.lastReminderSyncAt,
+                        now: timeline.date
+                    ),
+                    systemImage: "arrow.triangle.2.circlepath"
+                )
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.accentColor)
+            }
+        }
+        .padding(18)
+        .background(overviewCardBackground, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(Color.accentColor.opacity(0.10), lineWidth: 1)
+        }
+        .accessibilityElement(children: .combine)
     }
 
-    private var completedReminderCount: Int {
-        appModel.reminderItems.filter(\.isCompleted).count
+    private func syncFailureBanner(proxy: ScrollViewProxy) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: "exclamationmark.arrow.triangle.2.circlepath")
+                .foregroundStyle(.orange)
+                .accessibilityHidden(true)
+
+            Text("同步未完成，当前显示上次结果")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button("重试") {
+                Task {
+                    await refreshDashboard(using: proxy)
+                }
+            }
+            .font(.subheadline.weight(.semibold))
+            .disabled(appModel.isLoadingReminderLists)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(overviewCardBackground, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.orange.opacity(0.18), lineWidth: 1)
+        }
     }
 
     private var permissionState: some View {
-        RemindersStateView(
-            title: "还没有连接到系统提醒事项",
+        RemindersOverviewStateView(
+            title: "连接你的提醒事项",
             message: permissionDescription,
-            primaryTitle: appModel.reminderPermissionStatus == .notDetermined ? "请求授权" : "去系统设置",
+            primaryTitle: appModel.reminderPermissionStatus == .notDetermined ? "允许访问" : "去系统设置",
             primaryAction: {
                 if appModel.reminderPermissionStatus == .notDetermined {
                     Task {
@@ -148,83 +175,22 @@ struct RemindersOverviewView: View {
         )
     }
 
-    private func syncSectionTitle(at now: Date) -> String {
-        if appModel.isLoadingReminderLists {
-            return "正在同步提醒事项…"
-        }
-
-        guard let lastReminderSyncAt = appModel.lastReminderSyncAt else {
-            return "还没有同步过提醒事项"
-        }
-
-        let elapsed = max(0, now.timeIntervalSince(lastReminderSyncAt))
-        if elapsed < 5 {
-            return "刚刚同步"
-        }
-        if elapsed < 60 {
-            return "最新同步 \(Int(elapsed)) 秒前"
-        }
-        if elapsed < 3_600 {
-            return "最新同步 \(Int(elapsed / 60)) 分钟前"
-        }
-        if elapsed < 86_400 {
-            return "最新同步 \(Int(elapsed / 3_600)) 小时前"
-        }
-        return "最新同步 \(Int(elapsed / 86_400)) 天前"
-    }
-
     private var loadingState: some View {
         VStack(spacing: 14) {
             ProgressView()
-            Text("正在同步提醒事项…")
+                .tint(.accentColor)
+            Text("正在同步任务概览…")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func starterTemplateState(proxy: ScrollViewProxy) -> some View {
-        RemindersStateView(
-            title: "还没有提醒事项列表",
-            message: "先创建一套起步列表，后面你在 Chat 里记下来的任务就能直接落进系统提醒事项。",
-            primaryTitle: "创建推荐起步列表",
-            primaryAction: {
-                Task {
-                    _ = await appModel.createStarterTemplate()
-                    await refreshDashboard(using: proxy)
-                }
-            },
-            secondaryTitle: "先去聊天",
-            secondaryAction: {
-                appModel.selectedTab = .chat
-            }
-        )
-    }
-
-    private func errorState(proxy: ScrollViewProxy) -> some View {
-        RemindersStateView(
-            title: "提醒事项暂时没同步成功",
-            message: appModel.reminderListsErrorMessage,
-            primaryTitle: "重新同步",
-            primaryAction: {
-                Task {
-                    await refreshDashboard(using: proxy, refreshPermission: true)
-                }
-            },
-            secondaryTitle: "去聊天",
-            secondaryAction: {
-                appModel.selectedTab = .chat
-            }
-        )
-    }
-
-    private func emptyState(proxy: ScrollViewProxy) -> some View {
-        RemindersStateView(
-            title: "现在没有未完成任务",
-            message: completedReminderCount == 0
-                ? "系统里暂时是空的。你可以回 Chat 再记一条，或者重新同步看看。"
-                : "当前看到的任务都已经处理完了，已完成 \(completedReminderCount) 条。",
-            primaryTitle: "去聊天记一条",
+    private func noListsState(proxy: ScrollViewProxy) -> some View {
+        RemindersOverviewStateView(
+            title: "还没有可显示的清单",
+            message: "任务会继续保存在 Apple 提醒事项。你可以先去 AIGTD 告诉小满想记下什么。",
+            primaryTitle: "去找小满",
             primaryAction: {
                 appModel.selectedTab = .chat
             },
@@ -237,94 +203,34 @@ struct RemindersOverviewView: View {
         )
     }
 
-    private var permissionDescription: String {
-        switch appModel.reminderPermissionStatus {
-        case .notDetermined:
-            return "先给 AIGTD 打开提醒事项权限，这里才能显示系统里的全部清单。"
-        case .denied:
-            return "你之前拒绝了提醒事项权限，需要到系统设置里重新打开。"
-        case .restricted:
-            return "当前设备限制了提醒事项权限，需要先在系统层处理。"
-        default:
-            return "提醒事项权限暂时不可用，请重新检查。"
-        }
-    }
-
-    private var deleteDialogBinding: Binding<Bool> {
-        Binding(
-            get: { reminderPendingDeletion != nil },
-            set: { newValue in
-                if newValue == false {
-                    reminderPendingDeletion = nil
+    private func errorState(proxy: ScrollViewProxy) -> some View {
+        RemindersOverviewStateView(
+            title: "任务暂时没有同步好",
+            message: "请稍后重试。你在 Apple 提醒事项中的任务不会受到影响。",
+            primaryTitle: "重新同步",
+            primaryAction: {
+                Task {
+                    await refreshDashboard(using: proxy, refreshPermission: true)
                 }
+            },
+            secondaryTitle: "去找小满",
+            secondaryAction: {
+                appModel.selectedTab = .chat
             }
         )
     }
 
-    private func normalizedListTitle(_ title: String) -> String {
-        title
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-    }
-
-    private func displayListTitle(for key: String, fallbackItems: [ReminderItemInfo]) -> String {
-        if let title = fallbackItems.first?.listTitle.trimmingCharacters(in: .whitespacesAndNewlines),
-           title.isEmpty == false {
-            return title
-        }
-        return key.isEmpty ? "未分类" : key
-    }
-
-    private func reminderSort(lhs: ReminderItemInfo, rhs: ReminderItemInfo) -> Bool {
-        switch (lhs.dueDate, rhs.dueDate) {
-        case let (left?, right?):
-            if left != right { return left < right }
-        case (_?, nil):
-            return true
-        case (nil, _?):
-            return false
-        case (nil, nil):
-            break
-        }
-
-        return lhs.title.localizedCompare(rhs.title) == .orderedAscending
-    }
-
-    private func color(for title: String) -> Color {
-        let key = normalizedListTitle(title)
-        switch key {
-        case let value where value.contains("收集箱"), let value where value.contains("inbox"):
-            return Color(red: 0.31, green: 0.64, blue: 1.0)
-        case let value where value.contains("下一步"), let value where value.contains("nextaction"):
-            return Color(red: 1.0, green: 0.31, blue: 0.24)
-        case let value where value.contains("项目"), let value where value.contains("project"):
-            return Color(red: 1.0, green: 0.62, blue: 0.16)
-        case let value where value.contains("等待"), let value where value.contains("waiting"):
-            return Color(red: 0.39, green: 0.63, blue: 1.0)
-        case let value where value.contains("也许"), let value where value.contains("maybe"):
-            return Color(red: 0.62, green: 0.49, blue: 1.0)
+    private var permissionDescription: String {
+        switch appModel.reminderPermissionStatus {
+        case .notDetermined:
+            return "允许 AIGTD 读取 Apple 提醒事项后，这里会显示你的清单和任务。"
+        case .denied:
+            return "需要在系统设置中允许 AIGTD 访问提醒事项，才能显示任务概览。"
+        case .restricted:
+            return "当前设备限制了提醒事项访问，请先检查系统限制。"
         default:
-            return .accentColor
+            return "提醒事项访问暂时不可用，请重新检查。"
         }
-    }
-
-    private func dueDescriptor(for item: ReminderItemInfo) -> ReminderDueDescriptor? {
-        guard let dueDate = item.dueDate else { return nil }
-
-        let isOverdue = dueDate < Calendar.current.startOfDay(for: .now)
-        let tint: Color
-        if isOverdue {
-            tint = Color(red: 0.95, green: 0.33, blue: 0.29)
-        } else if Calendar.current.isDateInToday(dueDate) {
-            tint = Color(red: 1.0, green: 0.62, blue: 0.16)
-        } else {
-            tint = .secondary
-        }
-
-        return ReminderDueDescriptor(
-            text: dueDate.formatted(date: .numeric, time: .omitted),
-            tint: tint
-        )
     }
 
     private func refreshDashboard(using proxy: ScrollViewProxy, refreshPermission: Bool = false) async {
@@ -337,47 +243,36 @@ struct RemindersOverviewView: View {
         pendingFocusID = appModel.consumePendingReminderFocusIdentifier()
         guard let focusID = pendingFocusID else { return }
         DispatchQueue.main.async {
-            withAnimation(.easeOut(duration: 0.25)) {
+            withAnimation(.easeOut(duration: 0.22)) {
                 proxy.scrollTo(focusID, anchor: .center)
             }
         }
     }
 
-    private func performToggle(for item: ReminderItemInfo, using proxy: ScrollViewProxy) {
-        guard processingReminderIDs.contains(item.id) == false else { return }
-        processingReminderIDs.insert(item.id)
-
-        Task {
-            _ = await appModel.setReminderCompletion(identifier: item.id, isCompleted: !item.isCompleted)
-            processingReminderIDs.remove(item.id)
-
-            if let nextID = groupedActiveSections.flatMap(\.items).first?.id {
-                DispatchQueue.main.async {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo(nextID, anchor: .top)
-                    }
-                }
-            }
+    private func accentColor(for title: String) -> Color {
+        let key = title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch key {
+        case let value where value.contains("收集箱"), let value where value.contains("inbox"):
+            return Color(red: 0.16, green: 0.55, blue: 0.96)
+        case let value where value.contains("项目"), let value where value.contains("project"):
+            return Color(red: 0.94, green: 0.48, blue: 0.19)
+        case let value where value.contains("等待"), let value where value.contains("waiting"):
+            return Color(red: 0.20, green: 0.67, blue: 0.59)
+        default:
+            return Color(red: 0.30, green: 0.53, blue: 0.95)
         }
     }
 
-    private func performDelete(_ item: ReminderItemInfo, using proxy: ScrollViewProxy) {
-        guard processingReminderIDs.contains(item.id) == false else { return }
-        processingReminderIDs.insert(item.id)
+    private var overviewBackground: Color {
+        colorScheme == .dark
+            ? Color(red: 0.10, green: 0.095, blue: 0.09)
+            : Color(red: 0.975, green: 0.965, blue: 0.94)
+    }
 
-        Task {
-            _ = await appModel.deleteReminder(identifier: item.id)
-            processingReminderIDs.remove(item.id)
-            reminderPendingDeletion = nil
-
-            if let nextID = groupedActiveSections.flatMap(\.items).first?.id {
-                DispatchQueue.main.async {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo(nextID, anchor: .top)
-                    }
-                }
-            }
-        }
+    private var overviewCardBackground: Color {
+        colorScheme == .dark
+            ? Color(red: 0.16, green: 0.15, blue: 0.14)
+            : Color.white.opacity(0.88)
     }
 
     private func openSystemSettings() {
@@ -386,128 +281,287 @@ struct RemindersOverviewView: View {
     }
 }
 
-private struct ReminderGroupSection: Identifiable {
-    let id: String
-    let title: String
-    let items: [ReminderItemInfo]
-
-    init(title: String, items: [ReminderItemInfo]) {
-        self.id = title
-        self.title = title
-        self.items = items
-    }
-}
-
-private struct ReminderDueDescriptor {
-    let text: String
-    let tint: Color
-}
-
-private struct ReminderGroupSectionView: View {
-    let section: ReminderGroupSection
+private struct ReminderOverviewListCard: View {
+    let section: ReminderOverviewSection
     let pendingFocusID: String?
-    let processingReminderIDs: Set<String>
-    let color: Color
-    let dueDescriptor: (ReminderItemInfo) -> ReminderDueDescriptor?
-    let onToggleCompletion: (ReminderItemInfo) -> Void
-    let onDelete: (ReminderItemInfo) -> Void
+    let accent: Color
+
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(section.title)
-                .font(.title3.weight(.bold))
-                .foregroundStyle(color)
-                .padding(.bottom, 10)
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                    .fill(accent)
+                    .frame(width: 5, height: 24)
+
+                Text(section.title)
+                    .font(.title3.weight(.bold))
+
+                Spacer(minLength: 8)
+
+                Text("\(section.items.count) 项")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
 
             if section.items.isEmpty {
-                Text("这个清单里暂时没有未完成任务")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .padding(.vertical, 8)
-                    .padding(.horizontal, 2)
+                HStack(spacing: 10) {
+                    Image(systemName: "tray")
+                        .foregroundStyle(accent.opacity(0.75))
+                    Text("这个清单暂时没有任务")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 8)
             } else {
-                ForEach(section.items) { item in
-                    ReminderNativeRow(
-                        item: item,
-                        isFocused: item.id == pendingFocusID,
-                        isProcessing: processingReminderIDs.contains(item.id),
-                        dueDescriptor: dueDescriptor(item),
-                        onToggleCompletion: {
-                            onToggleCompletion(item)
+                VStack(spacing: 10) {
+                    ForEach(section.items) { item in
+                        NavigationLink {
+                            ReminderReadOnlyDetailView(
+                                item: item,
+                                onAskXiaomanToAdjust: { appModel in
+                                    appModel.routeToChatForReminderAdjustment(item)
+                                },
+                                onOpenInReminders: openReminder
+                            )
+                        } label: {
+                            ReminderOverviewTaskCard(
+                                item: item,
+                                isFocused: item.id == pendingFocusID,
+                                accent: accent
+                            )
                         }
-                    )
-                    .id(item.id)
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button("完成") {
-                            onToggleCompletion(item)
-                        }
-                        .tint(.green)
-
-                        Button("删除", role: .destructive) {
-                            onDelete(item)
-                        }
+                        .buttonStyle(.plain)
+                        .id(item.id)
                     }
                 }
             }
-
-            Divider()
-                .overlay(Color(.separator))
-                .padding(.top, 14)
-                .padding(.bottom, 12)
         }
+        .padding(16)
+        .background(cardBackground, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(accent.opacity(0.12), lineWidth: 1)
+        }
+    }
+
+    private var cardBackground: Color {
+        colorScheme == .dark
+            ? Color(red: 0.16, green: 0.15, blue: 0.14)
+            : Color.white.opacity(0.88)
+    }
+
+    private func openReminder(_ item: ReminderItemInfo, openURL: OpenURLAction) {
+        guard let encodedID = item.id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+              let itemURL = URL(string: "x-apple-reminderkit://REMCDReminder/\(encodedID)") else {
+            openRemindersApp(using: openURL)
+            return
+        }
+
+        openURL(itemURL) { accepted in
+            if accepted == false {
+                openRemindersApp(using: openURL)
+            }
+        }
+    }
+
+    private func openRemindersApp(using openURL: OpenURLAction) {
+        guard let url = URL(string: "x-apple-reminderkit://") else { return }
+        openURL(url)
     }
 }
 
-private struct ReminderNativeRow: View {
+private struct ReminderOverviewTaskCard: View {
     let item: ReminderItemInfo
     let isFocused: Bool
-    let isProcessing: Bool
-    let dueDescriptor: ReminderDueDescriptor?
-    let onToggleCompletion: () -> Void
+    let accent: Color
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            Button(action: onToggleCompletion) {
-                Group {
-                    if isProcessing {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Image(systemName: "circle")
-                            .font(.title3)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .frame(width: 24, height: 24, alignment: .top)
-            }
-            .buttonStyle(.plain)
+            Image(systemName: item.isCompleted ? "checkmark.sparkles" : "text.badge.checkmark")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(accent)
+                .frame(width: 34, height: 34)
+                .background(accent.opacity(0.10), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 7) {
                 Text(item.title)
-                    .font(.body)
+                    .font(.body.weight(.semibold))
                     .foregroundStyle(.primary)
                     .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                if let dueDescriptor {
-                    Text(dueDescriptor.text)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(dueDescriptor.tint)
+                HStack(spacing: 6) {
+                    Label(reminderDateDescription(item.dueDate), systemImage: "calendar")
+                    Text("·")
+                    Text(item.listTitle.isEmpty ? "未分类" : item.listTitle)
                 }
-            }
-            .padding(.top, 1)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
 
-            Spacer(minLength: 0)
+                Text(reminderStatusDescription(item))
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(statusTint)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(statusTint.opacity(0.10), in: Capsule(style: .continuous))
+            }
+
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.tertiary)
+                .padding(.top, 10)
         }
-        .padding(.vertical, 10)
-        .padding(.horizontal, 2)
+        .padding(13)
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(isFocused ? Color.accentColor.opacity(0.10) : Color.clear)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(isFocused ? accent.opacity(0.12) : Color.primary.opacity(0.035))
         )
+        .overlay {
+            if isFocused {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(accent.opacity(0.32), lineWidth: 1)
+            }
+        }
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("打开只读任务详情")
+    }
+
+    private var statusTint: Color {
+        if item.isCompleted {
+            return Color(red: 0.20, green: 0.64, blue: 0.43)
+        }
+        if let dueDate = item.dueDate,
+           dueDate < Calendar.current.startOfDay(for: .now) {
+            return Color(red: 0.86, green: 0.31, blue: 0.27)
+        }
+        return accent
     }
 }
 
-private struct RemindersStateView: View {
+struct ReminderReadOnlyDetailView: View {
+    let item: ReminderItemInfo
+    let onAskXiaomanToAdjust: (AppModel) -> Void
+    let onOpenInReminders: (ReminderItemInfo, OpenURLAction) -> Void
+
+    @Environment(AppModel.self) private var appModel
+    @Environment(\.openURL) private var openURL
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(alignment: .top, spacing: 12) {
+                        Image(systemName: "sparkles")
+                            .foregroundStyle(Color(red: 0.94, green: 0.48, blue: 0.19))
+                            .frame(width: 38, height: 38)
+                            .background(Color.orange.opacity(0.12), in: Circle())
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(item.title)
+                                .font(.title2.weight(.bold))
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text("只读任务详情")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Text("这条任务保存在 Apple 提醒事项中。AIGTD 不会在这个页面直接修改它。")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(18)
+                .background(detailCardBackground, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+
+                VStack(spacing: 0) {
+                    ReminderDetailValueRow(label: "时间", value: reminderDateDescription(item.dueDate))
+                    Divider().padding(.leading, 16)
+                    ReminderDetailValueRow(label: "清单", value: item.listTitle.isEmpty ? "未分类" : item.listTitle)
+                    Divider().padding(.leading, 16)
+                    ReminderDetailValueRow(label: "状态", value: reminderStatusDescription(item))
+                }
+                .background(detailCardBackground, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+
+                if item.notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("备注")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Text(item.notes)
+                            .font(.body)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(18)
+                    .background(detailCardBackground, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                }
+
+                VStack(spacing: 12) {
+                    Button {
+                        onAskXiaomanToAdjust(appModel)
+                    } label: {
+                        Label("让小满调整", systemImage: "bubble.left.and.sparkles")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(RemindersOverviewPrimaryButtonStyle())
+
+                    Button {
+                        onOpenInReminders(item, openURL)
+                    } label: {
+                        Label("在提醒事项中打开", systemImage: "arrow.up.forward.app")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(RemindersOverviewSecondaryButtonStyle())
+                }
+            }
+            .padding(16)
+            .padding(.bottom, 24)
+        }
+        .background(detailBackground.ignoresSafeArea())
+        .navigationTitle("任务详情")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var detailBackground: Color {
+        colorScheme == .dark
+            ? Color(red: 0.10, green: 0.095, blue: 0.09)
+            : Color(red: 0.975, green: 0.965, blue: 0.94)
+    }
+
+    private var detailCardBackground: Color {
+        colorScheme == .dark
+            ? Color(red: 0.16, green: 0.15, blue: 0.14)
+            : Color.white.opacity(0.90)
+    }
+}
+
+private struct ReminderDetailValueRow: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 18) {
+            Text(label)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .frame(width: 44, alignment: .leading)
+            Text(value)
+                .font(.body.weight(.medium))
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .multilineTextAlignment(.trailing)
+        }
+        .padding(16)
+    }
+}
+
+private struct RemindersOverviewStateView: View {
     let title: String
     let message: String
     let primaryTitle: String
@@ -533,57 +587,84 @@ private struct RemindersStateView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
+            Image(systemName: "sparkles")
+                .font(.title2.weight(.semibold))
+                .foregroundStyle(Color(red: 0.94, green: 0.48, blue: 0.19))
+
             Text(title)
                 .font(.title2.weight(.bold))
-                .foregroundStyle(.primary)
 
             Text(message)
                 .font(.body)
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
-            HStack(spacing: 12) {
+            VStack(spacing: 10) {
                 Button(primaryTitle, action: primaryAction)
-                    .buttonStyle(RemindersPrimaryButtonStyle())
+                    .buttonStyle(RemindersOverviewPrimaryButtonStyle())
 
                 if let secondaryTitle, let secondaryAction {
                     Button(secondaryTitle, action: secondaryAction)
-                        .buttonStyle(RemindersSecondaryButtonStyle())
+                        .buttonStyle(RemindersOverviewSecondaryButtonStyle())
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(.horizontal, 22)
-        .padding(.top, 28)
-        .background(Color(.systemGroupedBackground))
+        .padding(.top, 30)
     }
 }
 
-private struct RemindersPrimaryButtonStyle: ButtonStyle {
+private struct RemindersOverviewPrimaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.subheadline.weight(.semibold))
+            .font(.body.weight(.semibold))
             .foregroundStyle(.white)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
+            .frame(minHeight: 48)
+            .padding(.horizontal, 16)
             .background(
-                Capsule(style: .continuous)
-                    .fill(Color.accentColor.opacity(configuration.isPressed ? 0.8 : 1))
+                RoundedRectangle(cornerRadius: 15, style: .continuous)
+                    .fill(Color.accentColor.opacity(configuration.isPressed ? 0.78 : 1))
             )
+            .scaleEffect(configuration.isPressed ? 0.985 : 1)
     }
 }
 
-private struct RemindersSecondaryButtonStyle: ButtonStyle {
+private struct RemindersOverviewSecondaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.subheadline.weight(.medium))
+            .font(.body.weight(.semibold))
             .foregroundStyle(.primary)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
+            .frame(minHeight: 48)
+            .padding(.horizontal, 16)
             .background(
-                Capsule(style: .continuous)
-                    .fill(Color(.secondarySystemGroupedBackground))
+                RoundedRectangle(cornerRadius: 15, style: .continuous)
+                    .fill(Color.primary.opacity(configuration.isPressed ? 0.09 : 0.055))
             )
+            .scaleEffect(configuration.isPressed ? 0.985 : 1)
     }
+}
+
+private func reminderDateDescription(_ dueDate: Date?) -> String {
+    guard let dueDate else { return "未设置时间" }
+
+    let components = Calendar.current.dateComponents([.hour, .minute, .second], from: dueDate)
+    let hasExplicitTime = components.hour != 0 || components.minute != 0 || components.second != 0
+    return dueDate.formatted(
+        date: .abbreviated,
+        time: hasExplicitTime ? .shortened : .omitted
+    )
+}
+
+private func reminderStatusDescription(_ item: ReminderItemInfo) -> String {
+    if item.isCompleted {
+        return "已完成"
+    }
+    if let dueDate = item.dueDate,
+       dueDate < Calendar.current.startOfDay(for: .now) {
+        return "已逾期"
+    }
+    return "待处理"
 }
 
 #Preview {

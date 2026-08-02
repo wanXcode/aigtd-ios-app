@@ -53,6 +53,30 @@ protocol VoiceTranscriptionService: Sendable {
     ) async throws -> VoiceTranscriptionResult
 }
 
+/// A live speech session used by the hold-to-talk interaction.
+///
+/// Keeping this protocol provider-neutral lets the Chat UI depend on voice
+/// behavior without knowing about the Doubao SDK lifecycle.
+protocol VoiceLiveTranscriptionSession: AnyObject, Sendable {
+    func start(
+        languageCode: String?,
+        onUpdate: @escaping @Sendable (VoiceTranscriptionUpdate) async -> Void
+    ) throws
+
+    func finish() async throws -> VoiceTranscriptionResult
+    func cancel()
+}
+
+protocol VoiceLiveTranscriptionSessionBuilding: Sendable {
+    func makeSession(configuration: VoiceTranscriptionConfiguration) -> any VoiceLiveTranscriptionSession
+}
+
+struct DoubaoLiveTranscriptionSessionBuilder: VoiceLiveTranscriptionSessionBuilding {
+    func makeSession(configuration: VoiceTranscriptionConfiguration) -> any VoiceLiveTranscriptionSession {
+        DoubaoOfficialASRSession(configuration: configuration)
+    }
+}
+
 extension VoiceTranscriptionService {
     func transcribe(_ request: VoiceTranscriptionRequest) async throws -> VoiceTranscriptionResult {
         try await transcribe(request, onUpdate: nil)

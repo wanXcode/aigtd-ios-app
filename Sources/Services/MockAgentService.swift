@@ -134,7 +134,7 @@ enum ReminderCommandSanitizer {
 
 struct MockAgentService {
     private let mappingRuleEngine = AppleRemindersMappingRuleEngine()
-    private let preferredUserAddress = "哥哥"
+    private let preferredUserAddress = ""
 
     private let stopPrefixes = [
         "提醒我", "帮我", "记住", "记得", "记一下", "记录一下", "新增任务", "加个任务",
@@ -209,7 +209,7 @@ struct MockAgentService {
                 requiresConfirmation: false
             )
             return makeResult(
-                reply: "我在，\(preferredUserAddress)。你直接告诉我要记什么、改什么，或者问我今天还有什么事就行。",
+                reply: addressed("我在。你直接告诉我要记什么、改什么，或者问我今天还有什么事就行。", to: preferredUserAddress),
                 summary: "这句我先接住了，还没往提醒事项里创建内容",
                 action: action,
                 confidence: 0.96,
@@ -318,7 +318,7 @@ struct MockAgentService {
                 requiresConfirmation: false
             )
             return makeResult(
-                reply: "好的，\(preferredUserAddress)。这条我帮你标记完成。",
+                reply: addressed("好的，这条我帮你标记完成。", to: preferredUserAddress),
                 summary: "准备完成：\(completion.target)",
                 action: action,
                 confidence: completion.confidence,
@@ -338,7 +338,7 @@ struct MockAgentService {
                 requiresConfirmation: false
             )
             return makeResult(
-                reply: "改好了，\(preferredUserAddress)。这条我帮你挪过去。",
+                reply: addressed("改好了，这条我帮你挪过去。", to: preferredUserAddress),
                 summary: "准备移动到：\(movement.destinationList)",
                 action: action,
                 confidence: movement.confidence,
@@ -374,7 +374,7 @@ struct MockAgentService {
                 requiresConfirmation: false
             )
             return makeResult(
-                reply: "记好了，\(preferredUserAddress)。我帮你建这个清单。",
+                reply: addressed("记好了，我帮你建了这个清单。", to: preferredUserAddress),
                 summary: "准备创建列表：\(listName)",
                 action: action,
                 confidence: 0.94,
@@ -414,7 +414,7 @@ struct MockAgentService {
             requiresConfirmation: false
         )
         return makeResult(
-            reply: "收到，\(preferredUserAddress)。你继续说，我来帮你收口成任务或安排。",
+            reply: addressed("收到。你继续说，我来帮你收口成任务或安排。", to: preferredUserAddress),
             summary: "先替你记下来了",
             action: action,
             confidence: 0.68,
@@ -457,6 +457,12 @@ struct MockAgentService {
         }
 
         return preferredUserAddress
+    }
+
+    private func addressed(_ message: String, to address: String) -> String {
+        let normalized = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalized.isEmpty == false else { return message }
+        return "\(normalized)，\(message)"
     }
 
     private func isCasualProbe(_ text: String) -> Bool {
@@ -587,7 +593,7 @@ struct MockAgentService {
                 "top_items": matchedItems.map(\.title).joined(separator: "、"),
                 "shown_ids": matchedItems.map(\.id).joined(separator: ",")
             ],
-            reply: "\(preferredUserAddress)，我查到了：\(details.joined(separator: "；"))。",
+            reply: addressed("我查到了：\(details.joined(separator: "；"))。", to: preferredUserAddress),
             summary: "已查看指定任务的备注和完成状态",
             confidence: 0.98,
             signals: ["reminder_detail_query", requestsNotes ? "notes" : "status"]
@@ -683,7 +689,7 @@ struct MockAgentService {
         let listText = preferredList == nil ? "" : "，放进“\(preferredList!)”"
         return (
             entities: entities,
-            reply: "记好了，\(preferredUserAddress)。这条我帮你建进提醒事项\(listText)。",
+            reply: addressed("记好了，这条我帮你建进提醒事项\(listText)。", to: preferredUserAddress),
             summary: "准备创建任务：\(title)",
             confidence: dueDateISO.isEmpty ? 0.76 : 0.88,
             followUpPrompt: "如果你愿意，我也可以继续帮你补备注、改时间，或者换到别的清单。",
@@ -1107,25 +1113,25 @@ struct MockAgentService {
         openItemCount: Int
     ) -> String {
         if reminderListCount == 0 {
-            return "\(address)，你现在还没有提醒事项清单。要的话我先帮你搭一套。"
+            return addressed("你现在还没有提醒事项清单。要的话我先帮你搭一套。", to: address)
         }
 
         if mode.items.isEmpty {
             switch mode.scopeLabel {
             case "今天":
-                return "\(address)，你今天暂时没有到期的提醒。"
+                return addressed("你今天暂时没有到期的提醒。", to: address)
             case "明天":
-                return "\(address)，你明天暂时还没有安排。"
+                return addressed("你明天暂时还没有安排。", to: address)
             case "收集箱":
-                return "\(address)，收集箱里现在还空着。"
+                return addressed("收集箱里现在还空着。", to: address)
             case "项目":
-                return "\(address)，项目这边我暂时没看到新的内容。"
+                return addressed("项目这边我暂时没看到新的内容。", to: address)
             case "等待中":
-                return "\(address)，等待中的事情现在还没有新的。"
+                return addressed("等待中的事情现在还没有新的。", to: address)
             case "也许以后", "未来":
-                return "\(address)，未来清单里现在暂时没有要补的。"
+                return addressed("未来清单里现在暂时没有要补的。", to: address)
             default:
-                return "\(address)，当前暂时没有新的提醒。"
+                return addressed("当前暂时没有新的提醒。", to: address)
             }
         }
 
@@ -1134,21 +1140,21 @@ struct MockAgentService {
 
         switch mode.scopeLabel {
         case "今天":
-            return "\(address)，你今天主要还有：\(itemsText)\(suffix)。"
+            return addressed("你今天主要还有：\(itemsText)\(suffix)。", to: address)
         case "明天":
-            return "\(address)，你明天主要有：\(itemsText)\(suffix)。"
+            return addressed("你明天主要有：\(itemsText)\(suffix)。", to: address)
         case "收集箱":
-            return "\(address)，收集箱里我先看到：\(itemsText)\(suffix)。"
+            return addressed("收集箱里我先看到：\(itemsText)\(suffix)。", to: address)
         case "项目":
-            return "\(address)，项目这边我先帮你看到了：\(itemsText)\(suffix)。"
+            return addressed("项目这边我先帮你看到了：\(itemsText)\(suffix)。", to: address)
         case "等待中":
-            return "\(address)，等待中的事情主要有：\(itemsText)\(suffix)。"
+            return addressed("等待中的事情主要有：\(itemsText)\(suffix)。", to: address)
         case "也许以后", "未来":
-            return "\(address)，未来这边先看见：\(itemsText)\(suffix)。"
+            return addressed("未来这边先看见：\(itemsText)\(suffix)。", to: address)
         case "当前":
-            return "\(address)，你现在主要还有：\(itemsText)\(suffix)。"
+            return addressed("你现在主要还有：\(itemsText)\(suffix)。", to: address)
         default:
-            return "\(address)，\(mode.scopeLabel)主要有：\(itemsText)\(suffix)。"
+            return addressed("\(mode.scopeLabel)主要有：\(itemsText)\(suffix)。", to: address)
         }
     }
 
