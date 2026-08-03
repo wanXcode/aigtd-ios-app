@@ -36,15 +36,24 @@ final class ChatViewportControllerTests: XCTestCase {
         XCTAssertEqual(controller.scrollRequest, originalRequest)
     }
 
-    func testPassiveGeometryChangeDoesNotExitHistoryMode() {
+    func testPassiveGeometryChangeAtBottomExitsHistoryMode() {
         let controller = ChatViewportController()
         controller.viewportDidChange(isNearBottom: false, isUserInteracting: true)
         controller.userInteractionDidEnd(isNearBottom: false)
 
         controller.viewportDidChange(isNearBottom: true, isUserInteracting: false)
 
-        XCTAssertEqual(controller.mode, .readingHistory)
-        XCTAssertTrue(controller.showsReturnToLatest)
+        XCTAssertEqual(controller.mode, .followingLatest)
+        XCTAssertFalse(controller.showsReturnToLatest)
+    }
+
+    func testPassiveGeometryChangeAwayFromBottomDoesNotEnterHistoryMode() {
+        let controller = ChatViewportController()
+
+        controller.viewportDidChange(isNearBottom: false, isUserInteracting: false)
+
+        XCTAssertEqual(controller.mode, .followingLatest)
+        XCTAssertFalse(controller.showsReturnToLatest)
     }
 
     func testStreamingAndCardUpdatesFollowWithoutAnimation() {

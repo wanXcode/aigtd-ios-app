@@ -168,7 +168,9 @@ private struct VoiceHoldToTalkModifier: ViewModifier {
                 if case let .second(true, drag) = value, let drag {
                     state.updateDrag(verticalTranslation: drag.translation.height)
                 }
+                let shouldReleaseCapture = didBeginGesture
                 didBeginGesture = false
+                guard shouldReleaseCapture else { return }
                 Task {
                     await state.releaseCapture()
                 }
@@ -193,9 +195,7 @@ private struct VoiceHoldToTalkModifier: ViewModifier {
 }
 
 extension View {
-    /// Adds DingTalk-style hold-to-talk behavior while preserving normal taps
-    /// for keyboard focus. Apply it to the empty composer area, or to the voice
-    /// icon when the draft already contains text.
+    /// Adds DingTalk-style hold-to-talk behavior to a dedicated voice surface.
     func voiceHoldToTalk(
         state: VoiceInteractionState,
         configuration: VoiceTranscriptionConfiguration?,

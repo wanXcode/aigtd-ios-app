@@ -19,7 +19,7 @@ The current implementation is built around a simple principle:
 
 Current TestFlight-verified release: `0.6.0 (20)`
 
-Current development candidate: `0.7.0 (23)` public product experience upgrade and launch-crash hotfix
+Current development candidate: `0.7.0 (24)` Chat composer and voice-input experience candidate
 
 - [v0.7.0 PRD](docs/releases/v0.7.0-prd.md)
 

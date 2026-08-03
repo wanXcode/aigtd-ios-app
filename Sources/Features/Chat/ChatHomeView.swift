@@ -8,6 +8,11 @@ struct ReminderAdjustmentSelection: Equatable, Sendable {
     let reminderTitle: String
 }
 
+private enum ChatComposerInputMode: Equatable {
+    case text
+    case voice
+}
+
 enum ReminderAdjustmentDraftPolicy {
     static func retainedSelection(
         _ selection: ReminderAdjustmentSelection?,
@@ -74,6 +79,7 @@ struct ChatHomeView: View {
     @State private var voiceTailDotsCount = 0
     @State private var composerFocusRequestID = UUID()
     @State private var isComposerFocused = false
+    @State private var composerInputMode: ChatComposerInputMode = .text
     @State private var executingActionIDs: Set<UUID> = []
     @State private var timelineIsNearBottom = true
     @State private var timelineIsUserInteracting = false
@@ -188,6 +194,7 @@ struct ChatHomeView: View {
                     isStreamingReply: isStreamingReply,
                     voiceState: voiceInteraction,
                     voiceConfiguration: activeVoiceConfiguration,
+                    inputMode: $composerInputMode,
                     focusRequestID: $composerFocusRequestID,
                     isFocused: $isComposerFocused,
                     focusBridge: composerFocusBridge,
@@ -290,6 +297,13 @@ struct ChatHomeView: View {
         .onChange(of: voiceInteraction.phase) { _, phase in
             if phase == .draftReady, let preparedDraft = voiceInteraction.takePreparedDraft() {
                 draft = preparedDraft
+                composerInputMode = .text
+                isComposerFocused = true
+                composerFocusRequestID = UUID()
+                Task { @MainActor in
+                    await Task.yield()
+                    composerFocusBridge.focus()
+                }
             } else if phase == .failed, let notice = voiceInteraction.noticeText {
                 runtimeNotice = RuntimeNotice(text: notice, tone: .warning)
             } else if phase == .requestingPermission || phase == .starting || phase == .recording {
@@ -4333,6 +4347,7 @@ private struct ChatComposer: View {
     let isStreamingReply: Bool
     @ObservedObject var voiceState: VoiceInteractionState
     let voiceConfiguration: VoiceTranscriptionConfiguration?
+    @Binding var inputMode: ChatComposerInputMode
     @Binding var focusRequestID: UUID
     @Binding var isFocused: Bool
     @ObservedObject var focusBridge: ComposerTextViewFocusBridge
@@ -4345,26 +4360,21 @@ private struct ChatComposer: View {
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 10) {
-            if trimmedDraft.isEmpty {
-                composerField(microphoneHandlesHold: false)
-                    .voiceHoldToTalk(
-                        state: voiceState,
-                        configuration: voiceConfiguration,
-                        draft: $draft,
-                        onUnavailable: onVoiceUnavailable
-                    )
-            } else {
-                composerField(microphoneHandlesHold: true)
-            }
+            switch inputMode {
+            case .text:
+                textComposerField
 
-            if trimmedDraft.isEmpty == false {
-                ComposerAccessoryButton(
-                    mode: .send,
-                    isDisabled: isSending || isStreamingReply,
-                    onTap: onSend
-                )
-                .frame(width: 44, height: 44)
-                .transition(.scale.combined(with: .opacity))
+                if trimmedDraft.isEmpty == false {
+                    ComposerAccessoryButton(
+                        mode: .send,
+                        isDisabled: isSending || isStreamingReply,
+                        onTap: onSend
+                    )
+                    .frame(width: 44, height: 44)
+                    .transition(.scale.combined(with: .opacity))
+                }
+            case .voice:
+                voiceComposerField
             }
         }
         .padding(.horizontal, 16)
@@ -4378,20 +4388,9 @@ private struct ChatComposer: View {
         draft.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    @ViewBuilder
-    private func composerField(microphoneHandlesHold: Bool) -> some View {
+    private var textComposerField: some View {
         HStack(alignment: .bottom, spacing: 2) {
-            if microphoneHandlesHold {
-                microphoneButton
-                    .voiceHoldToTalk(
-                        state: voiceState,
-                        configuration: voiceConfiguration,
-                        draft: $draft,
-                        onUnavailable: onVoiceUnavailable
-                    )
-            } else {
-                microphoneButton
-            }
+            microphoneButton
 
             ZStack(alignment: .topLeading) {
                 GrowingComposerTextView(
@@ -4413,7 +4412,7 @@ private struct ChatComposer: View {
                 .padding(.vertical, composerVerticalPadding)
 
                 if trimmedDraft.isEmpty {
-                    Text(VoiceInteractionState.composerPrompt)
+                    Text(isFocused ? VoiceInteractionState.focusedComposerPrompt : VoiceInteractionState.composerPrompt)
                         .font(.body)
                         .foregroundStyle(.secondary)
                         .padding(.leading, textContainerInset.left)
@@ -4433,8 +4432,36 @@ private struct ChatComposer: View {
         .contentShape(Rectangle())
     }
 
+    private var voiceComposerField: some View {
+        HStack(spacing: 2) {
+            keyboardButton
+
+            Text("按住 说话")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.primary)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .contentShape(Rectangle())
+                .voiceHoldToTalk(
+                    state: voiceState,
+                    configuration: voiceConfiguration,
+                    draft: $draft,
+                    onUnavailable: onVoiceUnavailable
+                )
+                .accessibilityLabel("按住说话")
+                .accessibilityHint("按住开始录音，松手后文字进入输入框")
+        }
+        .padding(.leading, 4)
+        .frame(height: 44)
+        .background(AIGTDColor.surface.opacity(0.96), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(Color.black.opacity(0.035))
+        }
+    }
+
     private var microphoneButton: some View {
         Button {
+            inputMode = .voice
             isFocused = false
             focusBridge.blur()
         } label: {
@@ -4446,8 +4473,29 @@ private struct ChatComposer: View {
         }
         .buttonStyle(.plain)
         .disabled(isSending || voiceState.phase == .finalizing)
-        .accessibilityLabel("按住说话")
-        .accessibilityHint("按住开始录音，松手后文字进入输入框")
+        .accessibilityLabel("切换到语音输入")
+        .accessibilityHint("显示按住说话按钮")
+    }
+
+    private var keyboardButton: some View {
+        Button {
+            inputMode = .text
+            isFocused = true
+            focusRequestID = UUID()
+            Task { @MainActor in
+                await Task.yield()
+                focusBridge.focus()
+            }
+        } label: {
+            Image(systemName: "keyboard")
+                .font(.system(size: 21, weight: .medium))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isSending || voiceState.phase == .finalizing)
+        .accessibilityLabel("切换到键盘输入")
     }
 }
 
@@ -4723,10 +4771,9 @@ private struct GrowingComposerTextView: UIViewRepresentable {
         }
 
         func applyFocusIfNeeded(for textView: UITextView, requestID: UUID) {
-            guard requestID != lastFocusRequestID else { return }
+            guard requestID != lastFocusRequestID, textView.window != nil else { return }
             lastFocusRequestID = requestID
-            guard textView.window != nil else { return }
-            DispatchQueue.main.async {
+            if textView.isFirstResponder == false {
                 textView.becomeFirstResponder()
             }
         }

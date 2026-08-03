@@ -30,14 +30,16 @@ final class ChatViewportController {
     private(set) var scrollRequest = ScrollRequest(sequence: 0, behavior: .immediate)
 
     var showsReturnToLatest: Bool {
-        mode == .readingHistory
+        mode == .readingHistory && isNearBottom == false
     }
 
     func viewportDidChange(isNearBottom: Bool, isUserInteracting: Bool) {
         self.isNearBottom = isNearBottom
-        guard isUserInteracting else { return }
-
-        mode = isNearBottom ? .followingLatest : .readingHistory
+        if isNearBottom {
+            mode = .followingLatest
+        } else if isUserInteracting {
+            mode = .readingHistory
+        }
     }
 
     func userInteractionDidEnd(isNearBottom: Bool) {

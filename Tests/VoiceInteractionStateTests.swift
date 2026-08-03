@@ -5,6 +5,7 @@ import XCTest
 final class VoiceInteractionStateTests: XCTestCase {
     func testComposerPromptMatchesApprovedCopy() {
         XCTAssertEqual(VoiceInteractionState.composerPrompt, "发消息或按住说话…")
+        XCTAssertEqual(VoiceInteractionState.focusedComposerPrompt, "请输入...")
     }
 
     func testReleaseProducesEditableDraftWithoutSending() async {
@@ -37,6 +38,25 @@ final class VoiceInteractionStateTests: XCTestCase {
         await state.releaseCapture()
 
         XCTAssertEqual(state.preparedDraft, "明天下午联系小王，时间改成三点")
+    }
+
+    func testMultipleSpokenSentencesAreAccumulated() async {
+        let session = FakeVoiceSession(finalTranscript: "第二句")
+        let state = makeState(session: session)
+
+        await state.beginCapture(
+            configuration: configuration,
+            currentDraft: "",
+            insertionUTF16Offset: nil
+        )
+        await session.emit(.finalTranscript("第一句"))
+        await session.emit(.partial("第二句"))
+
+        XCTAssertEqual(state.liveTranscript, "第一句，第二句")
+
+        await state.releaseCapture()
+
+        XCTAssertEqual(state.preparedDraft, "第一句，第二句")
     }
 
     func testVoiceCanInsertAtUTF16CursorWithoutOverwritingDraft() async {
@@ -157,7 +177,9 @@ final class VoiceInteractionStateTests: XCTestCase {
 
         await state.beginCapture(configuration: configuration, currentDraft: "原草稿")
         let finishTask = Task { await state.releaseCapture() }
-        await Task.yield()
+        while session.finishCallCount == 0 {
+            await Task.yield()
+        }
         XCTAssertEqual(state.phase, .finalizing)
 
         state.cancelCapture()
@@ -269,6 +291,7 @@ private final class FakeVoiceSession: VoiceLiveTranscriptionSession, @unchecked 
 
 private final class DeferredFinishVoiceSession: VoiceLiveTranscriptionSession, @unchecked Sendable {
     private var continuation: CheckedContinuation<VoiceTranscriptionResult, Error>?
+    private(set) var finishCallCount = 0
 
     func start(
         languageCode _: String?,
@@ -276,7 +299,8 @@ private final class DeferredFinishVoiceSession: VoiceLiveTranscriptionSession, @
     ) throws {}
 
     func finish() async throws -> VoiceTranscriptionResult {
-        try await withCheckedThrowingContinuation { continuation in
+        finishCallCount += 1
+        return try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
         }
     }

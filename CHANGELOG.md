@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.0 (23) - TestFlight Candidate
+## 0.7.0 (24) - TestFlight Candidate
 
 `0.7.0` upgrades the existing reliable task capabilities into a public-facing product experience without expanding the smart-planning scope.
 
@@ -17,6 +17,12 @@
 
 ### Fixed
 
+- hide “return to latest” whenever Chat is already at the bottom and resume following after passive scrolling reaches the latest message
+- keep the text composer structurally stable so focusing, clearing all text, and restoring a voice draft no longer dismiss or delay the keyboard
+- show “请输入...” only while the text field is focused and use a dedicated keyboard/“按住 说话” voice composer mode
+- prevent an ordinary tap from accidentally completing a hold-to-talk gesture and opening the voice capture card
+- accumulate multiple final and partial speech segments instead of replacing the previous sentence
+- return recognized speech to an editable text draft, restore keyboard focus, and never auto-send
 - fixed a launch crash in TestFlight build 21 by restoring the CocoaPods framework embedding phase so `TTNetworkManager.framework` ships inside the app
 - fixed a second launch crash in TestFlight build 22 by moving EventKit reminder fetching outside `AppModel`'s main-actor isolation before returning sendable reminder values to the UI
 - made `xcodegen generate` run `pod install` automatically and added an archive dependency check to prevent linked dynamic frameworks from being omitted again
@@ -34,13 +40,15 @@
 
 ### Validation
 
-- generic iOS Simulator and generic iOS `build-for-testing` succeed for the app and 374 XCTest methods
+- generic iOS Simulator and generic iOS `build-for-testing` succeed for the app and 376 XCTest methods
 - generic iOS Release build and static analysis succeed
 - `git diff --check`, Release developer-copy scan, and sensitive-resource scan succeed
-- full XCTest execution remains pending because Xcode 26.2 cannot run the installed iOS 26.3 simulator and the third-party speech Pods exclude arm64 simulator builds
+- all 376 XCTest methods pass on iPhone 15 Pro Max with 0 failures, including 12 voice-interaction tests
 - the signed Build 23 development app launches on iPhone 15 Pro Max, remains running after the initial Reminders refresh, and produces no new crash report
 - the signed `0.7.0 (23)` archive succeeds and its team, bundle ID, version, architecture, packaged resources, and embedded dynamic dependencies pass inspection
 - uploaded `0.7.0 (23)` to App Store Connect on 2026-08-03; Apple returned `Upload succeeded` and began processing the package
+- the signed `0.7.0 (24)` archive and embedded dynamic dependencies pass inspection after the Chat composer and voice-input fixes
+- uploaded `0.7.0 (24)` to App Store Connect on 2026-08-03; Xcode returned `Upload succeeded` and `EXPORT SUCCEEDED`
 - TestFlight upload and in-place upgrade acceptance are recorded in `docs/releases/v0.7.0-test-plan.md`
 
 ## 0.6.0 - 2026-08-02

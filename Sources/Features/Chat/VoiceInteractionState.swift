@@ -34,6 +34,7 @@ struct SystemVoiceRecordingPermissionAuthorizer: VoiceRecordingPermissionAuthori
 @MainActor
 final class VoiceInteractionState: ObservableObject {
     static let composerPrompt = "发消息或按住说话…"
+    static let focusedComposerPrompt = "请输入..."
 
     enum Phase: Equatable, Sendable {
         case idle
@@ -65,6 +66,8 @@ final class VoiceInteractionState: ObservableObject {
     private var releaseRequested = false
     private var cancellationRequested = false
     private var durationTask: Task<Void, Never>?
+    private var committedTranscript = ""
+    private var currentPartialTranscript = ""
 
     init(
         permissionAuthorizer: any VoiceRecordingPermissionAuthorizing = SystemVoiceRecordingPermissionAuthorizer(),
@@ -140,6 +143,8 @@ final class VoiceInteractionState: ObservableObject {
         activeCaptureID = captureID
         originalDraft = currentDraft
         self.insertionUTF16Offset = insertionUTF16Offset
+        committedTranscript = ""
+        currentPartialTranscript = ""
         liveTranscript = ""
         preparedDraft = nil
         noticeText = nil
@@ -225,6 +230,8 @@ final class VoiceInteractionState: ObservableObject {
         session?.cancel()
         session = nil
         activeCaptureID = nil
+        committedTranscript = ""
+        currentPartialTranscript = ""
         liveTranscript = ""
         preparedDraft = nil
         noticeText = nil
@@ -286,6 +293,8 @@ final class VoiceInteractionState: ObservableObject {
     func takePreparedDraft() -> String? {
         guard phase == .draftReady, let preparedDraft else { return nil }
         self.preparedDraft = nil
+        committedTranscript = ""
+        currentPartialTranscript = ""
         liveTranscript = ""
         noticeText = nil
         elapsedSeconds = 0
@@ -311,10 +320,18 @@ final class VoiceInteractionState: ObservableObject {
     private func receive(_ update: VoiceTranscriptionUpdate, captureID: UUID) {
         guard activeCaptureID == captureID else { return }
         switch update {
-        case let .partial(text), let .finalTranscript(text):
+        case let .partial(text):
             let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
             if normalized.isEmpty == false {
-                liveTranscript = normalized
+                currentPartialTranscript = normalized
+                liveTranscript = appendingTranscript(normalized, to: committedTranscript)
+            }
+        case let .finalTranscript(text):
+            let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if normalized.isEmpty == false {
+                committedTranscript = appendingTranscript(normalized, to: committedTranscript)
+                currentPartialTranscript = ""
+                liveTranscript = committedTranscript
             }
         }
     }
@@ -330,11 +347,17 @@ final class VoiceInteractionState: ObservableObject {
         do {
             let result = try await activeSession.finish()
             guard activeCaptureID == captureID, phase == .finalizing else { return }
-            let finalText = result.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+            let resultText = result.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+            let capturedText = appendingTranscript(currentPartialTranscript, to: committedTranscript)
+            let finalText = resultText.isEmpty
+                ? capturedText
+                : appendingTranscript(resultText, to: committedTranscript)
             guard finalText.isEmpty == false else {
                 fail("没有听清，请再试一次。")
                 return
             }
+            committedTranscript = finalText
+            currentPartialTranscript = ""
             liveTranscript = finalText
             preparedDraft = VoiceDraftMerger.merge(
                 transcript: finalText,
@@ -391,11 +414,52 @@ final class VoiceInteractionState: ObservableObject {
         session = nil
         activeCaptureID = nil
         preparedDraft = nil
+        committedTranscript = ""
+        currentPartialTranscript = ""
         releaseRequested = false
         cancellationRequested = false
         elapsedSeconds = 0
         noticeText = message
         phase = .failed
+    }
+
+    private func appendingTranscript(_ chunk: String, to existing: String) -> String {
+        let existing = existing.trimmingCharacters(in: .whitespacesAndNewlines)
+        let chunk = chunk.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard existing.isEmpty == false else { return chunk }
+        guard chunk.isEmpty == false else { return existing }
+
+        if existing == chunk || existing.hasSuffix(chunk) {
+            return existing
+        }
+        if chunk.hasPrefix(existing) {
+            return chunk
+        }
+
+        let normalizedExisting = normalizedTranscript(existing)
+        let normalizedChunk = normalizedTranscript(chunk)
+        if normalizedExisting == normalizedChunk || normalizedExisting.hasSuffix(normalizedChunk) {
+            return existing
+        }
+        if normalizedChunk.hasPrefix(normalizedExisting) {
+            return chunk
+        }
+
+        return VoiceDraftMerger.merge(
+            transcript: chunk,
+            into: existing,
+            insertionUTF16Offset: nil
+        )
+    }
+
+    private func normalizedTranscript(_ value: String) -> String {
+        value.unicodeScalars
+            .filter {
+                CharacterSet.whitespacesAndNewlines.contains($0) == false &&
+                CharacterSet.punctuationCharacters.contains($0) == false
+            }
+            .map(String.init)
+            .joined()
     }
 
     private func publicMessage(for error: Error) -> String {
