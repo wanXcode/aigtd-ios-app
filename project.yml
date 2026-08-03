@@ -2,6 +2,7 @@ name: AIGTDReminders
 options:
   bundleIdPrefix: com.wan.todo
   developmentLanguage: en
+  postGenCommand: pod install
   deploymentTarget:
     iOS: "18.0"
 settings:
@@ -9,7 +10,7 @@ settings:
     SWIFT_VERSION: 6.0
     PRODUCT_NAME: AIGTD Reminders
     MARKETING_VERSION: 0.7.0
-    CURRENT_PROJECT_VERSION: 21
+    CURRENT_PROJECT_VERSION: 22
     ENABLE_USER_SCRIPT_SANDBOXING: NO
 targets:
   AIGTDReminders:

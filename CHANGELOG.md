@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.0 (21) - TestFlight Candidate
+## 0.7.0 (22) - TestFlight Candidate
 
 `0.7.0` upgrades the existing reliable task capabilities into a public-facing product experience without expanding the smart-planning scope.
 
@@ -17,6 +17,8 @@
 
 ### Fixed
 
+- fixed a launch crash in TestFlight build 21 by restoring the CocoaPods framework embedding phase so `TTNetworkManager.framework` ships inside the app
+- made `xcodegen generate` run `pod install` automatically and added an archive dependency check to prevent linked dynamic frameworks from being omitted again
 - fixed voice permission, cancellation, interruption, and late-finalization races so cancelled recordings cannot overwrite the draft
 - fixed same-title reminder lists being merged in the read-only overview and kept each list's session order stable
 - fixed stale reminder context leaking into unrelated Chat turns after returning from task details
@@ -35,8 +37,8 @@
 - generic iOS Release build and static analysis succeed
 - `git diff --check`, Release developer-copy scan, and sensitive-resource scan succeed
 - full XCTest execution remains pending because Xcode 26.2 cannot run the installed iOS 26.3 simulator and the third-party speech Pods exclude arm64 simulator builds
-- the signed `0.7.0 (21)` archive succeeds and its team, bundle ID, version, architecture, and packaged resources pass inspection
-- uploaded `0.7.0 (21)` to App Store Connect on 2026-08-03; Apple returned `Upload succeeded` and began processing the package
+- the signed `0.7.0 (22)` archive succeeds and its team, bundle ID, version, architecture, packaged resources, and embedded dynamic dependencies pass inspection
+- uploaded `0.7.0 (22)` to App Store Connect on 2026-08-03; Apple returned `Upload succeeded` and began processing the package
 - TestFlight upload and in-place upgrade acceptance are recorded in `docs/releases/v0.7.0-test-plan.md`
 
 ## 0.6.0 - 2026-08-02
