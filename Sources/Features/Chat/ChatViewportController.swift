@@ -68,6 +68,12 @@ final class ChatViewportController {
         requestScroll(.immediate)
     }
 
+    func positionInitialTimelineAtLatest() {
+        mode = .followingLatest
+        isNearBottom = true
+        requestScroll(.immediate)
+    }
+
     func prepareForUserSend() {
         mode = .followingLatest
         isNearBottom = true

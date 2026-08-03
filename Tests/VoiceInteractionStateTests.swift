@@ -59,6 +59,21 @@ final class VoiceInteractionStateTests: XCTestCase {
         XCTAssertEqual(state.preparedDraft, "第一句，第二句")
     }
 
+    func testCumulativePartialTranscriptKeepsAllSpokenLines() async {
+        let session = FakeVoiceSession(finalTranscript: "第一句，第二句，第三句")
+        let state = makeState(session: session)
+
+        await state.beginCapture(configuration: configuration, currentDraft: "")
+        await session.emit(.partial("第一句"))
+        await session.emit(.partial("第一句，第二句"))
+        await session.emit(.partial("第一句，第二句，第三句"))
+
+        XCTAssertEqual(state.liveTranscript, "第一句，第二句，第三句")
+
+        await state.releaseCapture()
+        XCTAssertEqual(state.preparedDraft, "第一句，第二句，第三句")
+    }
+
     func testVoiceCanInsertAtUTF16CursorWithoutOverwritingDraft() async {
         let session = FakeVoiceSession(finalTranscript: "下午三点")
         let state = makeState(session: session)
@@ -177,9 +192,8 @@ final class VoiceInteractionStateTests: XCTestCase {
 
         await state.beginCapture(configuration: configuration, currentDraft: "原草稿")
         let finishTask = Task { await state.releaseCapture() }
-        while session.finishCallCount == 0 {
-            await Task.yield()
-        }
+        await session.waitUntilFinishStarts()
+        XCTAssertEqual(session.finishCallCount, 1)
         XCTAssertEqual(state.phase, .finalizing)
 
         state.cancelCapture()
@@ -291,6 +305,7 @@ private final class FakeVoiceSession: VoiceLiveTranscriptionSession, @unchecked 
 
 private final class DeferredFinishVoiceSession: VoiceLiveTranscriptionSession, @unchecked Sendable {
     private var continuation: CheckedContinuation<VoiceTranscriptionResult, Error>?
+    private var finishStartedContinuation: CheckedContinuation<Void, Never>?
     private(set) var finishCallCount = 0
 
     func start(
@@ -300,12 +315,25 @@ private final class DeferredFinishVoiceSession: VoiceLiveTranscriptionSession, @
 
     func finish() async throws -> VoiceTranscriptionResult {
         finishCallCount += 1
+        finishStartedContinuation?.resume()
+        finishStartedContinuation = nil
         return try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
         }
     }
 
     func cancel() {}
+
+    func waitUntilFinishStarts() async {
+        guard finishCallCount == 0 else { return }
+        await withCheckedContinuation { continuation in
+            if finishCallCount > 0 {
+                continuation.resume()
+            } else {
+                finishStartedContinuation = continuation
+            }
+        }
+    }
 
     func resolve(transcript: String) {
         continuation?.resume(

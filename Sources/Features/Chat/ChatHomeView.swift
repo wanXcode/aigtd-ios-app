@@ -80,6 +80,7 @@ struct ChatHomeView: View {
     @State private var composerFocusRequestID = UUID()
     @State private var isComposerFocused = false
     @State private var composerInputMode: ChatComposerInputMode = .text
+    @State private var hasPositionedInitialTimeline = false
     @State private var executingActionIDs: Set<UUID> = []
     @State private var timelineIsNearBottom = true
     @State private var timelineIsUserInteracting = false
@@ -133,6 +134,7 @@ struct ChatHomeView: View {
                 }
             }
             .background(chatBackground)
+            .defaultScrollAnchor(.bottom)
             .scrollDismissesKeyboard(.interactively)
             .scrollIndicators(.hidden)
             .onScrollGeometryChange(for: Bool.self) { geometry in
@@ -270,6 +272,15 @@ struct ChatHomeView: View {
             insertWelcomeMessageIfNeeded()
             restorePendingDraftIfNeeded()
         }
+        .task(id: initialTimelineSignature) {
+            guard hasPositionedInitialTimeline == false,
+                  activeSession != nil else { return }
+            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(100))
+            guard Task.isCancelled == false else { return }
+            viewportController.positionInitialTimelineAtLatest()
+            hasPositionedInitialTimeline = true
+        }
         .onChange(of: appModel.selectedTab) { _, newValue in
             guard newValue == .chat else { return }
             restorePendingDraftIfNeeded()
@@ -348,6 +359,12 @@ struct ChatHomeView: View {
     private var activeMessages: [ChatMessage] {
         guard let activeSession else { return [] }
         return messages.filter { $0.sessionID == activeSession.id }
+    }
+
+    private var initialTimelineSignature: String {
+        let sessionID = activeSession?.id.uuidString ?? "no-session"
+        let lastMessageID = activeMessages.last?.id.uuidString ?? "no-message"
+        return "\(sessionID):\(lastMessageID):\(activeMessages.count)"
     }
 
     private var recentConversationHistory: [AgentConversationTurn] {
@@ -4430,15 +4447,26 @@ private struct ChatComposer: View {
         }
         .animation(.easeOut(duration: 0.14), value: composerHeight)
         .contentShape(Rectangle())
+        .voiceHoldToTalk(
+            state: voiceState,
+            configuration: voiceConfiguration,
+            draft: $draft,
+            isEnabled: trimmedDraft.isEmpty,
+            onUnavailable: onVoiceUnavailable
+        )
     }
 
     private var voiceComposerField: some View {
         HStack(spacing: 2) {
             keyboardButton
 
-            Text("按住 说话")
-                .font(.body.weight(.semibold))
-                .foregroundStyle(.primary)
+            ZStack {
+                Color.clear
+
+                Text("按住 说话")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.primary)
+            }
                 .frame(maxWidth: .infinity, minHeight: 44)
                 .contentShape(Rectangle())
                 .voiceHoldToTalk(

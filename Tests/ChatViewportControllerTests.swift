@@ -117,4 +117,18 @@ final class ChatViewportControllerTests: XCTestCase {
         XCTAssertEqual(controller.mode, .followingLatest)
         XCTAssertEqual(controller.scrollRequest.behavior, .animated)
     }
+
+    func testInitialTimelinePositionAlwaysRequestsLatestImmediately() {
+        let controller = ChatViewportController()
+        controller.viewportDidChange(isNearBottom: false, isUserInteracting: true)
+        controller.userInteractionDidEnd(isNearBottom: false)
+        let originalSequence = controller.scrollRequest.sequence
+
+        controller.positionInitialTimelineAtLatest()
+
+        XCTAssertEqual(controller.mode, .followingLatest)
+        XCTAssertTrue(controller.isNearBottom)
+        XCTAssertEqual(controller.scrollRequest.sequence, originalSequence + 1)
+        XCTAssertEqual(controller.scrollRequest.behavior, .immediate)
+    }
 }

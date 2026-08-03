@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.0 (24) - TestFlight Candidate
+## 0.7.0 (25) - TestFlight Candidate
 
 `0.7.0` upgrades the existing reliable task capabilities into a public-facing product experience without expanding the smart-planning scope.
 
@@ -22,6 +22,9 @@
 - show “请输入...” only while the text field is focused and use a dedicated keyboard/“按住 说话” voice composer mode
 - prevent an ordinary tap from accidentally completing a hold-to-talk gesture and opening the voice capture card
 - accumulate multiple final and partial speech segments instead of replacing the previous sentence
+- restore hold-to-talk directly on the empty text composer in addition to the explicit voice mode
+- use full ASR results and an unlimited scrolling transcript so later spoken sentences preserve earlier content
+- open Chat at the latest message with a native bottom anchor plus an explicit initial-position fallback
 - return recognized speech to an editable text draft, restore keyboard focus, and never auto-send
 - fixed a launch crash in TestFlight build 21 by restoring the CocoaPods framework embedding phase so `TTNetworkManager.framework` ships inside the app
 - fixed a second launch crash in TestFlight build 22 by moving EventKit reminder fetching outside `AppModel`'s main-actor isolation before returning sendable reminder values to the UI
@@ -49,6 +52,9 @@
 - uploaded `0.7.0 (23)` to App Store Connect on 2026-08-03; Apple returned `Upload succeeded` and began processing the package
 - the signed `0.7.0 (24)` archive and embedded dynamic dependencies pass inspection after the Chat composer and voice-input fixes
 - uploaded `0.7.0 (24)` to App Store Connect on 2026-08-03; Xcode returned `Upload succeeded` and `EXPORT SUCCEEDED`
+- generic iOS Build 25 compilation succeeds; 24 focused voice and viewport tests pass on iPhone 15 Pro Max with 0 failures
+- the signed `0.7.0 (25)` archive and embedded dynamic dependencies pass inspection
+- uploaded `0.7.0 (25)` to App Store Connect on 2026-08-04; Xcode returned `Upload succeeded` and `EXPORT SUCCEEDED`
 - TestFlight upload and in-place upgrade acceptance are recorded in `docs/releases/v0.7.0-test-plan.md`
 
 ## 0.6.0 - 2026-08-02

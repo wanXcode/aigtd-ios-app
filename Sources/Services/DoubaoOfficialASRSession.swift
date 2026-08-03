@@ -81,7 +81,9 @@ final class DoubaoOfficialASRSession: NSObject, SpeechEngineDelegate, VoiceLiveT
                 engine.setBoolParam(false, forKey: SE_PARAMS_KEY_ASR_AUTO_STOP_BOOL)
                 engine.setIntParam(60_000, forKey: SE_PARAMS_KEY_VAD_MAX_SPEECH_DURATION_INT)
                 engine.setBoolParam(true, forKey: SE_PARAMS_KEY_ENABLE_GET_VOLUME_BOOL)
-                engine.setStringParam(SE_ASR_RESULT_TYPE_SINGLE, forKey: SE_PARAMS_KEY_ASR_RESULT_TYPE_STRING)
+                // Full results keep earlier utterances when the user continues
+                // speaking after a pause instead of replacing them with one segment.
+                engine.setStringParam(SE_ASR_RESULT_TYPE_FULL, forKey: SE_PARAMS_KEY_ASR_RESULT_TYPE_STRING)
 
                 let ret = engine.initEngine()
                 guard ret == SENoError else {

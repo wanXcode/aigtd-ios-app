@@ -66,14 +66,27 @@ struct VoiceCaptureOverlay: View {
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(state.isCancellationArmed ? Color.red : Color.secondary)
 
-            Text(text.isEmpty ? "说出你想记下或调整的事情" : text)
-                .font(.title3)
-                .foregroundStyle(text.isEmpty ? Color.secondary : Color.primary)
-                .multilineTextAlignment(.center)
-                .lineLimit(3)
-                .frame(maxWidth: .infinity, minHeight: 58)
-                .contentTransition(.interpolate)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    Text(text.isEmpty ? "说出你想记下或调整的事情" : text)
+                        .font(.title3)
+                        .foregroundStyle(text.isEmpty ? Color.secondary : Color.primary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity)
+                        .contentTransition(.interpolate)
+
+                    Color.clear
+                        .frame(height: 1)
+                        .id("voice-transcript-bottom")
+                }
+                .scrollIndicators(.hidden)
+                .frame(maxWidth: .infinity, minHeight: 76, maxHeight: 180)
+                .onChange(of: text) { _, _ in
+                    proxy.scrollTo("voice-transcript-bottom", anchor: .bottom)
+                }
                 .accessibilityLabel(text.isEmpty ? "等待说话" : "已识别：\(text)")
+            }
         }
     }
 }
@@ -126,6 +139,7 @@ private struct VoiceHoldToTalkModifier: ViewModifier {
     let configuration: VoiceTranscriptionConfiguration?
     @Binding var draft: String
     let insertionUTF16Offset: Int?
+    let isEnabled: Bool
     let onUnavailable: () -> Void
 
     @State private var didBeginGesture = false
@@ -134,6 +148,7 @@ private struct VoiceHoldToTalkModifier: ViewModifier {
         content
             .simultaneousGesture(holdGesture)
             .accessibilityAction(named: "开始或结束录音") {
+                guard isEnabled else { return }
                 guard let configuration else {
                     onUnavailable()
                     return
@@ -178,7 +193,7 @@ private struct VoiceHoldToTalkModifier: ViewModifier {
     }
 
     private func beginGestureIfNeeded() {
-        guard didBeginGesture == false else { return }
+        guard isEnabled, didBeginGesture == false else { return }
         didBeginGesture = true
         guard let configuration else {
             onUnavailable()
@@ -201,6 +216,7 @@ extension View {
         configuration: VoiceTranscriptionConfiguration?,
         draft: Binding<String>,
         insertionUTF16Offset: Int? = nil,
+        isEnabled: Bool = true,
         onUnavailable: @escaping () -> Void
     ) -> some View {
         modifier(
@@ -209,6 +225,7 @@ extension View {
                 configuration: configuration,
                 draft: draft,
                 insertionUTF16Offset: insertionUTF16Offset,
+                isEnabled: isEnabled,
                 onUnavailable: onUnavailable
             )
         )
