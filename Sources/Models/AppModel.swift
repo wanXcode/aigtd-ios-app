@@ -1,4 +1,4 @@
-import EventKit
+@preconcurrency import EventKit
 import Foundation
 import Observation
 
@@ -439,11 +439,22 @@ final class AppModel {
     }
 
     private func fetchReminderItemsInSystemOrder() async throws -> [ReminderItemInfo] {
+        let fetchedItems = try await Self.loadReminderItemsInSystemOrder()
+
+        let stabilized = ReminderOverviewPolicy.stabilizedItems(
+            fetchedItems,
+            previousState: reminderOverviewOrderState
+        )
+        reminderOverviewOrderState = stabilized.state
+        return stabilized.items
+    }
+
+    nonisolated private static func loadReminderItemsInSystemOrder() async throws -> [ReminderItemInfo] {
         let store = EKEventStore()
         store.refreshSourcesIfNecessary()
         let predicate = store.predicateForReminders(in: nil)
 
-        let fetchedItems: [ReminderItemInfo] = try await withCheckedThrowingContinuation { continuation in
+        return try await withCheckedThrowingContinuation { continuation in
             store.fetchReminders(matching: predicate) { reminders in
                 let items = (reminders ?? []).map { reminder in
                     ReminderItemInfo(
@@ -459,13 +470,6 @@ final class AppModel {
                 continuation.resume(returning: items)
             }
         }
-
-        let stabilized = ReminderOverviewPolicy.stabilizedItems(
-            fetchedItems,
-            previousState: reminderOverviewOrderState
-        )
-        reminderOverviewOrderState = stabilized.state
-        return stabilized.items
     }
 
 }
