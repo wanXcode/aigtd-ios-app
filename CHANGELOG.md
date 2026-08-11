@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.0 (26) - TestFlight Candidate
+## 0.7.0 (27) - TestFlight Candidate
 
 `0.7.0` upgrades the existing reliable task capabilities into a public-facing product experience without expanding the smart-planning scope.
 
@@ -60,6 +60,8 @@
 - uploaded `0.7.0 (25)` to App Store Connect on 2026-08-04; Xcode returned `Upload succeeded` and `EXPORT SUCCEEDED`
 - generic iOS Build 26 compilation and test-target compilation succeed after the Reminders synchronization fixes
 - the signed Build 26 development app launches on iPhone, and manual acceptance confirms previously stale completed tasks disappear from the Tasks overview
+- the signed `0.7.0 (27)` Release archive succeeds with the expected team, bundle ID, arm64 architecture, and embedded `TTNetworkManager.framework`
+- uploaded `0.7.0 (27)` for TestFlight internal testing on 2026-08-12; Xcode Organizer returned `App upload complete` and marked the archive `Uploaded to Apple`
 - TestFlight upload and in-place upgrade acceptance are recorded in `docs/releases/v0.7.0-test-plan.md`
 
 ## 0.6.0 - 2026-08-02
