@@ -31,6 +31,50 @@ struct SystemVoiceRecordingPermissionAuthorizer: VoiceRecordingPermissionAuthori
     }
 }
 
+struct VoiceTranscriptPresentation: Equatable, Sendable {
+    var stable = ""
+    var partial = ""
+    var live = ""
+}
+
+@MainActor
+final class VoiceCapturePresentationState: ObservableObject {
+    @Published private(set) var transcript = VoiceTranscriptPresentation()
+    @Published private(set) var elapsedSeconds = 0
+
+    func updateTranscript(stable: String, partial: String, live: String) {
+        let updated = VoiceTranscriptPresentation(stable: stable, partial: partial, live: live)
+        guard updated != transcript else { return }
+        transcript = updated
+    }
+
+    func updateElapsedSeconds(_ value: Int) {
+        guard value != elapsedSeconds else { return }
+        elapsedSeconds = value
+    }
+
+    func reset() {
+        transcript = VoiceTranscriptPresentation()
+        elapsedSeconds = 0
+    }
+}
+
+@MainActor
+final class VoiceAudioMeterState: ObservableObject {
+    @Published private(set) var level = 0.0
+
+    func update(_ value: Double) {
+        let normalized = min(max(value, 0), 1)
+        let smoothed = level * 0.55 + normalized * 0.45
+        guard abs(smoothed - level) >= 0.01 else { return }
+        level = smoothed
+    }
+
+    func reset() {
+        level = 0
+    }
+}
+
 @MainActor
 final class VoiceInteractionState: ObservableObject {
     static let composerPrompt = "发消息或按住说话…"
@@ -48,10 +92,11 @@ final class VoiceInteractionState: ObservableObject {
     }
 
     @Published private(set) var phase: Phase = .idle
-    @Published private(set) var liveTranscript = ""
-    @Published private(set) var elapsedSeconds = 0
     @Published private(set) var preparedDraft: String?
     @Published private(set) var noticeText: String?
+
+    let presentation = VoiceCapturePresentationState()
+    let audioMeter = VoiceAudioMeterState()
 
     let cancellationDistance: CGFloat
     let warningDuration: Int
@@ -68,6 +113,7 @@ final class VoiceInteractionState: ObservableObject {
     private var durationTask: Task<Void, Never>?
     private var committedTranscript = ""
     private var currentPartialTranscript = ""
+    private var preparedTranscript = ""
 
     init(
         permissionAuthorizer: any VoiceRecordingPermissionAuthorizing = SystemVoiceRecordingPermissionAuthorizer(),
@@ -90,9 +136,9 @@ final class VoiceInteractionState: ObservableObject {
 
     var showsCaptureOverlay: Bool {
         switch phase {
-        case .requestingPermission, .starting, .recording, .cancelling, .finalizing:
+        case .requestingPermission, .starting, .recording, .cancelling:
             return true
-        case .idle, .draftReady, .failed:
+        case .idle, .finalizing, .draftReady, .failed:
             return false
         }
     }
@@ -130,6 +176,26 @@ final class VoiceInteractionState: ObservableObject {
         String(format: "%02d:%02d", elapsedSeconds / 60, elapsedSeconds % 60)
     }
 
+    var liveTranscript: String {
+        presentation.transcript.live
+    }
+
+    var elapsedSeconds: Int {
+        presentation.elapsedSeconds
+    }
+
+    var audioLevel: Double {
+        audioMeter.level
+    }
+
+    var stableTranscript: String {
+        committedTranscript
+    }
+
+    var partialTranscript: String {
+        currentPartialTranscript
+    }
+
     /// Begins a hold-to-talk capture. The current draft is snapshotted so a
     /// cancellation can restore it exactly.
     func beginCapture(
@@ -145,10 +211,11 @@ final class VoiceInteractionState: ObservableObject {
         self.insertionUTF16Offset = insertionUTF16Offset
         committedTranscript = ""
         currentPartialTranscript = ""
-        liveTranscript = ""
+        preparedTranscript = ""
         preparedDraft = nil
         noticeText = nil
-        elapsedSeconds = 0
+        presentation.reset()
+        audioMeter.reset()
         releaseRequested = false
         cancellationRequested = false
         phase = .requestingPermission
@@ -232,19 +299,27 @@ final class VoiceInteractionState: ObservableObject {
         activeCaptureID = nil
         committedTranscript = ""
         currentPartialTranscript = ""
-        liveTranscript = ""
+        preparedTranscript = ""
         preparedDraft = nil
+        originalDraft = ""
+        insertionUTF16Offset = nil
         noticeText = nil
         releaseRequested = false
         cancellationRequested = false
-        elapsedSeconds = 0
+        presentation.reset()
+        audioMeter.reset()
         phase = .idle
     }
 
     /// Stops an interrupted capture and preserves reliable partial text as an
     /// editable draft when available.
     func handleInterruption() {
-        guard showsCaptureOverlay else { return }
+        switch phase {
+        case .requestingPermission, .starting, .recording, .cancelling, .finalizing:
+            break
+        case .idle, .draftReady, .failed:
+            return
+        }
         durationTask?.cancel()
         durationTask = nil
         session?.cancel()
@@ -263,6 +338,7 @@ final class VoiceInteractionState: ObservableObject {
                 into: originalDraft,
                 insertionUTF16Offset: insertionUTF16Offset
             )
+            preparedTranscript = partial
             noticeText = "录音已中断，已保留听到的内容。"
             phase = .draftReady
         }
@@ -290,16 +366,33 @@ final class VoiceInteractionState: ObservableObject {
     }
 
     /// Returns the prepared composer text once and resets transient voice UI.
-    func takePreparedDraft() -> String? {
+    /// If the composer changed while finalization was in flight, preserve those
+    /// edits and append the transcript rather than restoring the stale snapshot.
+    func takePreparedDraft(currentDraft: String? = nil) -> String? {
         guard phase == .draftReady, let preparedDraft else { return nil }
+        let resolvedDraft: String
+        if let currentDraft, currentDraft != originalDraft, preparedTranscript.isEmpty == false {
+            resolvedDraft = currentDraft.contains(preparedTranscript)
+                ? currentDraft
+                : VoiceDraftMerger.merge(
+                    transcript: preparedTranscript,
+                    into: currentDraft,
+                    insertionUTF16Offset: nil
+                )
+        } else {
+            resolvedDraft = preparedDraft
+        }
         self.preparedDraft = nil
+        preparedTranscript = ""
+        originalDraft = ""
+        insertionUTF16Offset = nil
         committedTranscript = ""
         currentPartialTranscript = ""
-        liveTranscript = ""
         noticeText = nil
-        elapsedSeconds = 0
+        presentation.reset()
+        audioMeter.reset()
         phase = .idle
-        return preparedDraft
+        return resolvedDraft
     }
 
     func clearFailure() {
@@ -324,15 +417,19 @@ final class VoiceInteractionState: ObservableObject {
             let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
             if normalized.isEmpty == false {
                 currentPartialTranscript = normalized
-                liveTranscript = appendingTranscript(normalized, to: committedTranscript)
+                updatePresentedTranscript(
+                    live: appendingTranscript(normalized, to: committedTranscript)
+                )
             }
         case let .finalTranscript(text):
             let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
             if normalized.isEmpty == false {
                 committedTranscript = appendingTranscript(normalized, to: committedTranscript)
                 currentPartialTranscript = ""
-                liveTranscript = committedTranscript
+                updatePresentedTranscript(live: committedTranscript)
             }
+        case let .audioLevel(level):
+            audioMeter.update(level)
         }
     }
 
@@ -358,7 +455,8 @@ final class VoiceInteractionState: ObservableObject {
             }
             committedTranscript = finalText
             currentPartialTranscript = ""
-            liveTranscript = finalText
+            preparedTranscript = finalText
+            updatePresentedTranscript(live: finalText)
             preparedDraft = VoiceDraftMerger.merge(
                 transcript: finalText,
                 into: originalDraft,
@@ -372,6 +470,7 @@ final class VoiceInteractionState: ObservableObject {
             guard activeCaptureID == captureID, phase == .finalizing else { return }
             let partial = liveTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
             if partial.isEmpty == false {
+                preparedTranscript = partial
                 preparedDraft = VoiceDraftMerger.merge(
                     transcript: partial,
                     into: originalDraft,
@@ -394,8 +493,9 @@ final class VoiceInteractionState: ObservableObject {
             while Task.isCancelled == false {
                 try? await Task.sleep(for: .seconds(1))
                 guard Task.isCancelled == false, self.activeCaptureID == captureID else { return }
-                self.elapsedSeconds += 1
-                if self.elapsedSeconds >= self.maximumDuration {
+                let elapsed = self.elapsedSeconds + 1
+                self.presentation.updateElapsedSeconds(elapsed)
+                if elapsed >= self.maximumDuration {
                     if self.phase == .cancelling {
                         self.cancelCapture()
                     } else {
@@ -414,13 +514,25 @@ final class VoiceInteractionState: ObservableObject {
         session = nil
         activeCaptureID = nil
         preparedDraft = nil
+        preparedTranscript = ""
+        originalDraft = ""
+        insertionUTF16Offset = nil
         committedTranscript = ""
         currentPartialTranscript = ""
         releaseRequested = false
         cancellationRequested = false
-        elapsedSeconds = 0
+        presentation.reset()
+        audioMeter.reset()
         noticeText = message
         phase = .failed
+    }
+
+    private func updatePresentedTranscript(live: String) {
+        presentation.updateTranscript(
+            stable: committedTranscript,
+            partial: currentPartialTranscript,
+            live: live
+        )
     }
 
     private func appendingTranscript(_ chunk: String, to existing: String) -> String {

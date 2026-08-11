@@ -31,9 +31,21 @@ final class ChatViewportControllerTests: XCTestCase {
         controller.contentDidChange(.streamingText)
         controller.contentDidChange(.cardState)
         controller.composerFocused()
+        controller.keyboardDidSettle()
 
         XCTAssertEqual(controller.mode, .readingHistory)
         XCTAssertEqual(controller.scrollRequest, originalRequest)
+    }
+
+    func testSettledKeyboardKeepsFollowingTimelineAtLatest() {
+        let controller = ChatViewportController()
+        let originalSequence = controller.scrollRequest.sequence
+
+        controller.keyboardDidSettle()
+
+        XCTAssertEqual(controller.mode, .followingLatest)
+        XCTAssertEqual(controller.scrollRequest.sequence, originalSequence + 1)
+        XCTAssertEqual(controller.scrollRequest.behavior, .immediate)
     }
 
     func testPassiveGeometryChangeAtBottomExitsHistoryMode() {

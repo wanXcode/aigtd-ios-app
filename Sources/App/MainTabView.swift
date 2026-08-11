@@ -1,39 +1,52 @@
 import Foundation
 import Observation
 import SwiftUI
+import UIKit
 
 struct MainTabView: View {
     @Environment(AppModel.self) private var appModel
     @State private var welcomeStore = XiaomanWelcomeStore()
+    @StateObject private var voiceInteraction = VoiceInteractionState()
     @State private var showsSettings = false
 #if DEBUG || INTERNAL
     @State private var showsDeveloperSettings = false
 #endif
 
     var body: some View {
-        TabView(selection: Binding(
-            get: { publicTabSelection },
-            set: { appModel.selectedTab = $0 }
-        )) {
-            NavigationStack {
-                ChatHomeView()
-                    .environment(welcomeStore)
-                    .toolbar { settingsToolbar }
-            }
-            .tag(AppTab.chat)
-            .tabItem {
-                Label("AIGTD", systemImage: "message.fill")
-            }
+        ZStack {
+            TabView(selection: Binding(
+                get: { publicTabSelection },
+                set: { appModel.selectedTab = $0 }
+            )) {
+                NavigationStack {
+                    ChatHomeView(voiceInteraction: voiceInteraction)
+                        .environment(welcomeStore)
+                        .toolbar { settingsToolbar }
+                }
+                .tag(AppTab.chat)
+                .tabItem {
+                    Label("AIGTD", systemImage: "message.fill")
+                }
 
-            NavigationStack {
-                RemindersOverviewView()
-                    .toolbar { settingsToolbar }
+                NavigationStack {
+                    RemindersOverviewView()
+                        .toolbar { settingsToolbar }
+                }
+                .tag(AppTab.reminders)
+                .tabItem {
+                    Label("任务", systemImage: "checklist")
+                }
             }
-            .tag(AppTab.reminders)
-            .tabItem {
-                Label("任务", systemImage: "checklist")
+            .accessibilityHidden(voiceInteraction.showsCaptureOverlay)
+
+            if voiceInteraction.showsCaptureOverlay {
+                VoiceCaptureOverlay(state: voiceInteraction)
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+                    .zIndex(20)
             }
         }
+        .animation(.easeOut(duration: 0.16), value: voiceInteraction.showsCaptureOverlay)
         .sheet(isPresented: $showsSettings) {
             NavigationStack {
                 PublicSettingsView()
@@ -55,10 +68,27 @@ struct MainTabView: View {
             showsSettings = true
 #endif
         }
+        .onChange(of: voiceInteraction.phase) { _, phase in
+            announceVoicePhaseIfNeeded(phase)
+        }
     }
 
     private var publicTabSelection: AppTab {
         appModel.selectedTab == .reminders ? .reminders : .chat
+    }
+
+    private func announceVoicePhaseIfNeeded(_ phase: VoiceInteractionState.Phase) {
+        guard UIAccessibility.isVoiceOverRunning else { return }
+        let message: String? = switch phase {
+        case .recording: "已开始录音，上滑取消，松手转成文字。"
+        case .cancelling: "已进入取消区域，松手取消语音输入。"
+        case .finalizing: "录音结束，正在转成文字。"
+        case .failed: voiceInteraction.noticeText
+        case .idle, .requestingPermission, .starting, .draftReady: nil
+        }
+        if let message {
+            UIAccessibility.post(notification: .announcement, argument: message)
+        }
     }
 
     @ToolbarContentBuilder

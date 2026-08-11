@@ -63,6 +63,11 @@ final class ChatViewportController {
         requestScroll(.immediate)
     }
 
+    func keyboardDidSettle() {
+        guard mode == .followingLatest else { return }
+        requestScroll(.immediate)
+    }
+
     func chatBecameVisible() {
         guard mode == .followingLatest else { return }
         requestScroll(.immediate)

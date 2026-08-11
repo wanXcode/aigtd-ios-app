@@ -15,6 +15,9 @@ final class DoubaoOfficialASRSession: NSObject, SpeechEngineDelegate, VoiceLiveT
     private var hasStartedEngine = false
     private var lastEngineMessage = ""
     private var finishTimeoutWorkItem: DispatchWorkItem?
+    private var lastVolumeDispatchTime: TimeInterval = 0
+    private var lastTranscriptDispatchTime: TimeInterval = 0
+    private var lastDispatchedPartial = ""
 
     init(configuration: VoiceTranscriptionConfiguration) {
         self.configuration = configuration
@@ -53,6 +56,9 @@ final class DoubaoOfficialASRSession: NSObject, SpeechEngineDelegate, VoiceLiveT
             didFinish = false
             hasStartedEngine = false
             lastEngineMessage = ""
+            lastVolumeDispatchTime = 0
+            lastTranscriptDispatchTime = 0
+            lastDispatchedPartial = ""
             finishTimeoutWorkItem?.cancel()
             finishTimeoutWorkItem = nil
             updateHandler = onUpdate
@@ -81,6 +87,7 @@ final class DoubaoOfficialASRSession: NSObject, SpeechEngineDelegate, VoiceLiveT
                 engine.setBoolParam(false, forKey: SE_PARAMS_KEY_ASR_AUTO_STOP_BOOL)
                 engine.setIntParam(60_000, forKey: SE_PARAMS_KEY_VAD_MAX_SPEECH_DURATION_INT)
                 engine.setBoolParam(true, forKey: SE_PARAMS_KEY_ENABLE_GET_VOLUME_BOOL)
+                engine.setBoolParam(true, forKey: SE_PARAMS_KEY_ASR_SHOW_VOLUME_BOOL)
                 // Full results keep earlier utterances when the user continues
                 // speaking after a pause instead of replacing them with one segment.
                 engine.setStringParam(SE_ASR_RESULT_TYPE_FULL, forKey: SE_PARAMS_KEY_ASR_RESULT_TYPE_STRING)
@@ -201,9 +208,11 @@ final class DoubaoOfficialASRSession: NSObject, SpeechEngineDelegate, VoiceLiveT
     func onMessage(with type: SEMessageType, andData data: Data) {
         let text = decodeText(from: data)
         stateQueue.async {
-            self.rawEvents.append("[\(type.rawValue)] \(text)")
-            if let readable = self.nonEmpty(text) {
-                self.lastEngineMessage = readable
+            if type != SEVolumeLevel {
+                self.rawEvents.append("[\(type.rawValue)] \(text)")
+                if let readable = self.nonEmpty(text) {
+                    self.lastEngineMessage = readable
+                }
             }
 
             switch type {
@@ -212,7 +221,12 @@ final class DoubaoOfficialASRSession: NSObject, SpeechEngineDelegate, VoiceLiveT
             case SEAsrPartialResult, SEPartialResult:
                 if let partial = self.extractText(from: text) {
                     self.latestTranscript = partial
-                    if let updateHandler = self.updateHandler {
+                    let now = ProcessInfo.processInfo.systemUptime
+                    let shouldDispatch = partial != self.lastDispatchedPartial
+                        && now - self.lastTranscriptDispatchTime >= 0.06
+                    if shouldDispatch, let updateHandler = self.updateHandler {
+                        self.lastDispatchedPartial = partial
+                        self.lastTranscriptDispatchTime = now
                         Task {
                             await updateHandler(.partial(partial))
                         }
@@ -228,6 +242,16 @@ final class DoubaoOfficialASRSession: NSObject, SpeechEngineDelegate, VoiceLiveT
                     }
                 }
                 self.finishLockedIfPossible()
+            case SEVolumeLevel:
+                let now = ProcessInfo.processInfo.systemUptime
+                if now - self.lastVolumeDispatchTime >= 1.0 / 15.0,
+                   let level = self.extractNormalizedVolume(from: text),
+                   let updateHandler = self.updateHandler {
+                    self.lastVolumeDispatchTime = now
+                    Task {
+                        await updateHandler(.audioLevel(level))
+                    }
+                }
             case SEEngineError:
                 let rawSummary = self.rawEvents.suffix(8).joined(separator: "\n")
                 let message = self.formatSDKErrorMessage(
@@ -329,6 +353,55 @@ final class DoubaoOfficialASRSession: NSObject, SpeechEngineDelegate, VoiceLiveT
             return nil
         }
         return extractText(fromJSONObject: json)
+    }
+
+    private func extractNormalizedVolume(from value: String) -> Double? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let rawValue = Double(trimmed) {
+            return normalizeVolume(rawValue)
+        }
+
+        guard let data = trimmed.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data),
+              let rawValue = findVolumeNumber(in: object) else {
+            return nil
+        }
+        return normalizeVolume(rawValue)
+    }
+
+    private func findVolumeNumber(in value: Any) -> Double? {
+        if let number = value as? NSNumber {
+            return number.doubleValue
+        }
+        if let string = value as? String, let number = Double(string) {
+            return number
+        }
+        if let dictionary = value as? [String: Any] {
+            for key in ["volume", "level", "vol", "audio_level", "data"] {
+                if let nested = dictionary[key], let number = findVolumeNumber(in: nested) {
+                    return number
+                }
+            }
+        }
+        if let array = value as? [Any] {
+            for item in array {
+                if let number = findVolumeNumber(in: item) {
+                    return number
+                }
+            }
+        }
+        return nil
+    }
+
+    private func normalizeVolume(_ rawValue: Double) -> Double {
+        let positive = max(0, rawValue)
+        if positive <= 1 {
+            return positive
+        }
+        if positive <= 100 {
+            return positive / 100
+        }
+        return min(positive / 32_768, 1)
     }
 
     private func extractText(fromJSONObject value: Any) -> String? {

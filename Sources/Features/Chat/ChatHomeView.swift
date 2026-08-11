@@ -1,6 +1,5 @@
 import SwiftData
 import SwiftUI
-import AVFoundation
 import UIKit
 
 struct ReminderAdjustmentSelection: Equatable, Sendable {
@@ -52,6 +51,8 @@ struct ChatHomeView: View {
     @Environment(AppModel.self) private var appModel
     @Environment(XiaomanWelcomeStore.self) private var welcomeStore
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Query(sort: \ChatSession.updatedAt, order: .reverse) private var sessions: [ChatSession]
     @Query(sort: \ChatMessage.createdAt) private var messages: [ChatMessage]
     @Query(sort: \ActionLog.createdAt) private var actionLogs: [ActionLog]
@@ -65,20 +66,9 @@ struct ChatHomeView: View {
     @State private var runtimeNotice: RuntimeNotice?
     @State private var modelSetupPrompt: ModelSetupPrompt?
     @State private var hasSeenModelSetupPrompt = false
-    @State private var isVoicePrimed = false
-    @State private var isRecordingVoice = false
-    @State private var isTranscribingVoice = false
-    @State private var isFinalizingVoice = false
-    @State private var activeVoiceSession: DoubaoOfficialASRSession?
-    @State private var draftBeforeVoiceInput = ""
-    @State private var hasVoiceUpdatedDraft = false
-    @State private var committedVoiceTranscript = ""
-    @State private var liveVoiceTranscript = ""
-    @State private var isStoppingVoice = false
-    @State private var activeVoiceSessionID: UUID?
-    @State private var voiceTailDotsCount = 0
     @State private var composerFocusRequestID = UUID()
     @State private var isComposerFocused = false
+    @State private var isKeyboardVisible = false
     @State private var composerInputMode: ChatComposerInputMode = .text
     @State private var hasPositionedInitialTimeline = false
     @State private var executingActionIDs: Set<UUID> = []
@@ -87,7 +77,7 @@ struct ChatHomeView: View {
     @State private var viewportController = ChatViewportController()
     @State private var streamingTextBuffer = ChatStreamingTextBuffer()
     @State private var pendingReminderAdjustmentSelection: ReminderAdjustmentSelection?
-    @StateObject private var voiceInteraction = VoiceInteractionState()
+    @ObservedObject var voiceInteraction: VoiceInteractionState
     private let agentRuntime = AgentRuntimeService()
     private let conversationCoordinator = AgentConversationCoordinator()
     @StateObject private var composerFocusBridge = ComposerTextViewFocusBridge()
@@ -135,6 +125,7 @@ struct ChatHomeView: View {
             }
             .background(chatBackground)
             .defaultScrollAnchor(.bottom)
+            .defaultScrollAnchor(.bottom, for: .sizeChanges)
             .scrollDismissesKeyboard(.interactively)
             .scrollIndicators(.hidden)
             .onScrollGeometryChange(for: Bool.self) { geometry in
@@ -170,8 +161,17 @@ struct ChatHomeView: View {
                 viewportController.contentDidChange(.messageInserted)
             }
             .onChange(of: isComposerFocused) { _, focused in
-                guard focused else { return }
+                guard focused, isKeyboardVisible else { return }
                 viewportController.composerFocused()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+                isKeyboardVisible = true
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidShowNotification)) { _ in
+                viewportController.keyboardDidSettle()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+                isKeyboardVisible = false
             }
             .onChange(of: appModel.selectedTab) { _, newValue in
                 guard newValue == .chat else { return }
@@ -212,8 +212,24 @@ struct ChatHomeView: View {
                         )
                     }
                 )
+                .opacity(voiceInteraction.showsCaptureOverlay ? 0.001 : 1)
+                .accessibilityHidden(voiceInteraction.showsCaptureOverlay)
+                .frame(
+                    height: voiceInteraction.showsCaptureOverlay
+                        ? VoiceCaptureLayout.timelineReservationHeight(
+                            dynamicTypeSize: dynamicTypeSize,
+                            compactHeight: verticalSizeClass == .compact
+                        )
+                        : nil,
+                    alignment: .bottom
+                )
+                .animation(
+                    .easeOut(duration: 0.24),
+                    value: voiceInteraction.showsCaptureOverlay
+                )
                 .overlay(alignment: .topTrailing) {
-                    if viewportController.showsReturnToLatest {
+                    if viewportController.showsReturnToLatest,
+                       voiceInteraction.showsCaptureOverlay == false {
                         Button {
                             viewportController.returnToLatest()
                         } label: {
@@ -276,7 +292,6 @@ struct ChatHomeView: View {
             guard hasPositionedInitialTimeline == false,
                   activeSession != nil else { return }
             await Task.yield()
-            try? await Task.sleep(for: .milliseconds(100))
             guard Task.isCancelled == false else { return }
             viewportController.positionInitialTimelineAtLatest()
             hasPositionedInitialTimeline = true
@@ -291,29 +306,25 @@ struct ChatHomeView: View {
                 in: newValue
             )
         }
-        .task(id: shouldAnimateVoiceTailDots) {
-            guard shouldAnimateVoiceTailDots else {
-                voiceTailDotsCount = 0
-                return
-            }
-            if voiceTailDotsCount == 0 {
-                voiceTailDotsCount = 1
-            }
-            while Task.isCancelled == false && shouldAnimateVoiceTailDots {
-                try? await Task.sleep(for: .milliseconds(380))
-                guard shouldAnimateVoiceTailDots else { break }
-                voiceTailDotsCount = (voiceTailDotsCount % 3) + 1
-            }
-        }
         .onChange(of: voiceInteraction.phase) { _, phase in
-            if phase == .draftReady, let preparedDraft = voiceInteraction.takePreparedDraft() {
+            if phase == .draftReady,
+               let preparedDraft = voiceInteraction.takePreparedDraft(currentDraft: draft) {
                 draft = preparedDraft
                 composerInputMode = .text
-                isComposerFocused = true
-                composerFocusRequestID = UUID()
-                Task { @MainActor in
-                    await Task.yield()
-                    composerFocusBridge.focus()
+                let shouldRestoreFocus = scenePhase == .active && appModel.selectedTab == .chat
+                isComposerFocused = shouldRestoreFocus
+                if shouldRestoreFocus {
+                    composerFocusRequestID = UUID()
+                    Task { @MainActor in
+                        await Task.yield()
+                        composerFocusBridge.focus(caretAtEndOf: preparedDraft)
+                        if UIAccessibility.isVoiceOverRunning {
+                            UIAccessibility.post(
+                                notification: .announcement,
+                                argument: "语音已转成文字，可以修改后发送。"
+                            )
+                        }
+                    }
                 }
             } else if phase == .failed, let notice = voiceInteraction.noticeText {
                 runtimeNotice = RuntimeNotice(text: notice, tone: .warning)
@@ -332,24 +343,6 @@ struct ChatHomeView: View {
                 voiceInteraction.handleInterruption()
             }
         }
-        .overlay(alignment: .bottom) {
-            if voiceInteraction.showsCaptureOverlay {
-                VoiceCaptureOverlay(
-                    state: voiceInteraction,
-                    onFinish: {
-                        Task { await voiceInteraction.releaseCapture() }
-                    },
-                    onCancel: {
-                        voiceInteraction.cancelCapture()
-                    }
-                )
-                .padding(.horizontal, 16)
-                .padding(.bottom, 76)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-                .zIndex(10)
-            }
-        }
-        .animation(.easeOut(duration: 0.2), value: voiceInteraction.showsCaptureOverlay)
     }
 
     private var activeSession: ChatSession? {
@@ -404,28 +397,6 @@ struct ChatHomeView: View {
             .suffix(4)
             .map { "\($0.id.uuidString)-\($0.executionStatus)-\($0.errorMessage.count)" }
             .joined(separator: "|")
-    }
-
-    private var voiceTailHighlightLength: Int {
-        guard isRecordingVoice || isTranscribingVoice else { return 0 }
-        let transcript = composeVoiceTranscript().trimmingCharacters(in: .whitespacesAndNewlines)
-        guard transcript.isEmpty == false else { return 0 }
-        return min(3, transcript.count)
-    }
-
-    private var voiceTailAnimatedDotsCount: Int {
-        guard shouldAnimateVoiceTailDots else { return 0 }
-        return max(1, voiceTailDotsCount)
-    }
-
-    private var isVoiceLiveRecognizing: Bool {
-        isRecordingVoice || isTranscribingVoice
-    }
-
-    private var shouldAnimateVoiceTailDots: Bool {
-        guard isVoiceLiveRecognizing else { return false }
-        let transcript = composeVoiceTranscript().trimmingCharacters(in: .whitespacesAndNewlines)
-        return transcript.isEmpty == false
     }
 
     private var activeModelConfiguration: AgentModelConfiguration? {
@@ -1241,379 +1212,6 @@ struct ChatHomeView: View {
         )
     }
 
-    private func handleVoiceKeyboardTakeover() {
-        guard isVoicePrimed || isRecordingVoice || isTranscribingVoice || isFinalizingVoice || activeVoiceSession != nil else { return }
-        activeVoiceSession?.cancel()
-        activeVoiceSession = nil
-        activeVoiceSessionID = nil
-        isVoicePrimed = false
-        isRecordingVoice = false
-        isTranscribingVoice = false
-        isFinalizingVoice = false
-        isStoppingVoice = false
-        committedVoiceTranscript = ""
-        liveVoiceTranscript = ""
-        hasVoiceUpdatedDraft = false
-        draftBeforeVoiceInput = removingVoiceIndicatorDots(from: draft)
-    }
-
-    private func beginVoiceInput() async {
-        guard isSending == false else { return }
-        guard isVoicePrimed == false,
-              isRecordingVoice == false,
-              isTranscribingVoice == false,
-              isFinalizingVoice == false,
-              activeVoiceSession == nil else { return }
-        guard let configuration = activeVoiceConfiguration else {
-            runtimeNotice = RuntimeNotice(
-                text: "先去 Agent 里把豆包语音识别配置好，再来用语音输入。",
-                tone: .warning
-            )
-            return
-        }
-
-        draftBeforeVoiceInput = draft
-        hasVoiceUpdatedDraft = false
-        committedVoiceTranscript = ""
-        liveVoiceTranscript = ""
-        isStoppingVoice = false
-        // Keep keyboard open when starting voice input.
-        isComposerFocused = true
-        composerFocusRequestID = UUID()
-        composerFocusBridge.focus()
-        isVoicePrimed = true
-        isRecordingVoice = false
-        isTranscribingVoice = false
-        isFinalizingVoice = false
-
-        do {
-            let permissionResult = await requestMicrophonePermissionIfNeeded()
-            switch permissionResult {
-            case .denied:
-                isVoicePrimed = false
-                runtimeNotice = RuntimeNotice(
-                    text: "没有麦克风权限，先去系统设置里开启一下。",
-                    tone: .warning
-                )
-                return
-            case .requestedNow:
-                isVoicePrimed = false
-                runtimeNotice = RuntimeNotice(
-                    text: "麦克风权限已经授权好了。你再点一次语音按钮开始录音。",
-                    tone: .info
-                )
-                return
-            case .granted:
-                break
-            }
-            let session = DoubaoOfficialASRSession(configuration: configuration)
-            let sessionID = UUID()
-            try session.start(languageCode: configuration.languageCode) { update in
-                await MainActor.run {
-                    guard activeVoiceSessionID == sessionID else { return }
-                    switch update {
-                    case let .partial(text):
-                        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
-                            committedVoiceTranscript = promotePreviousLiveTranscriptIfNeeded(
-                                committed: committedVoiceTranscript,
-                                currentLive: liveVoiceTranscript,
-                                incoming: text
-                            )
-                            liveVoiceTranscript = text
-                            let updatedDraft = mergedVoiceDraft(composeVoiceTranscript())
-                            if updatedDraft != draft {
-                                draft = updatedDraft
-                            }
-                            hasVoiceUpdatedDraft = true
-                            if isStoppingVoice == false {
-                                isVoicePrimed = false
-                                isRecordingVoice = true
-                                isTranscribingVoice = true
-                            }
-                        }
-                    case let .finalTranscript(text):
-                        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
-                            committedVoiceTranscript = appendVoiceChunk(
-                                committedVoiceTranscript,
-                                chunk: text
-                            )
-                            liveVoiceTranscript = ""
-                            let updatedDraft = mergedVoiceDraft(composeVoiceTranscript())
-                            if updatedDraft != draft {
-                                draft = updatedDraft
-                            }
-                            hasVoiceUpdatedDraft = true
-                        }
-                        if isStoppingVoice == false {
-                            isTranscribingVoice = false
-                        }
-                    }
-                }
-            }
-            activeVoiceSession = session
-            activeVoiceSessionID = sessionID
-            isRecordingVoice = true
-            isComposerFocused = true
-            composerFocusRequestID = UUID()
-            composerFocusBridge.focus()
-            runtimeNotice = RuntimeNotice(
-                text: "开始录音了。你再点一次语音按钮就会结束并整理文字。",
-                tone: .info
-            )
-        } catch {
-            if let activeVoiceSession {
-                activeVoiceSession.cancel()
-            }
-            activeVoiceSession = nil
-            activeVoiceSessionID = nil
-            isVoicePrimed = false
-            isRecordingVoice = false
-            runtimeNotice = RuntimeNotice(
-                text: "开始录音失败：\(readableVoiceError(error))",
-                tone: .warning
-            )
-        }
-    }
-
-    private func endVoiceInput(cancelled: Bool) async {
-        if cancelled {
-            cancelVoiceInput()
-            return
-        }
-
-        guard isVoicePrimed || isRecordingVoice || activeVoiceSession != nil else { return }
-        guard activeVoiceSession != nil else {
-            isVoicePrimed = false
-            isRecordingVoice = false
-            runtimeNotice = RuntimeNotice(
-                text: "说话时间太短，我还没来得及听清。",
-                tone: .warning
-            )
-            return
-        }
-
-        await stopRecordingAndTranscribe()
-    }
-
-    private func handleVoiceToggle() async {
-        if isVoicePrimed || isRecordingVoice || activeVoiceSession != nil {
-            await endVoiceInput(cancelled: false)
-        } else {
-            await beginVoiceInput()
-        }
-    }
-
-    private func stopRecordingAndTranscribe() async {
-        guard let configuration = activeVoiceConfiguration else { return }
-        guard let activeVoiceSession else { return }
-
-        do {
-            self.activeVoiceSession = nil
-            activeVoiceSessionID = nil
-            isVoicePrimed = false
-            isRecordingVoice = false
-            isTranscribingVoice = false
-            isFinalizingVoice = true
-            isStoppingVoice = true
-            let result = try await finishVoiceSessionWithTimeout(activeVoiceSession)
-
-            let transcript = result.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard transcript.isEmpty == false else {
-                isFinalizingVoice = false
-                isStoppingVoice = false
-                runtimeNotice = RuntimeNotice(
-                    text: "这次没识别出可用文字，你再说一遍试试。",
-                    tone: .warning
-                )
-                return
-            }
-
-            try? await Task.sleep(for: .milliseconds(350))
-            committedVoiceTranscript = appendVoiceChunk(committedVoiceTranscript, chunk: transcript)
-            liveVoiceTranscript = ""
-            let finalizedDraft = mergedVoiceDraft(refineVoiceTranscript(composeVoiceTranscript()))
-            if finalizedDraft != draft {
-                draft = finalizedDraft
-            }
-            isFinalizingVoice = false
-            isStoppingVoice = false
-            runtimeNotice = RuntimeNotice(
-                text: "语音已转成文字，你可以直接发出去了。",
-                tone: .success
-            )
-
-            if configuration.autoSendTranscript {
-                await sendWithoutPrompt(transcript, clearDraft: true)
-            } else {
-                isComposerFocused = true
-                composerFocusRequestID = UUID()
-                composerFocusBridge.focus()
-            }
-        } catch {
-            activeVoiceSession.cancel()
-            self.activeVoiceSession = nil
-            activeVoiceSessionID = nil
-            isVoicePrimed = false
-            isRecordingVoice = false
-            isTranscribingVoice = false
-            isFinalizingVoice = false
-            isStoppingVoice = false
-            let fallbackTranscript = composeVoiceTranscript().trimmingCharacters(in: .whitespacesAndNewlines)
-            if fallbackTranscript.isEmpty == false {
-                draft = mergedVoiceDraft(fallbackTranscript)
-                runtimeNotice = RuntimeNotice(
-                    text: "我先把刚才识别到的内容留在输入框里，你可以看一下再发。",
-                    tone: .info
-                )
-                isComposerFocused = true
-                composerFocusRequestID = UUID()
-                composerFocusBridge.focus()
-                return
-            }
-            runtimeNotice = RuntimeNotice(
-                text: readableVoiceError(error),
-                tone: .warning
-            )
-        }
-    }
-
-    private func cancelVoiceInput() {
-        activeVoiceSession?.cancel()
-        activeVoiceSession = nil
-        activeVoiceSessionID = nil
-        isVoicePrimed = false
-        isRecordingVoice = false
-        isTranscribingVoice = false
-        isFinalizingVoice = false
-        isStoppingVoice = false
-        committedVoiceTranscript = ""
-        liveVoiceTranscript = ""
-        if hasVoiceUpdatedDraft {
-            draft = draftBeforeVoiceInput
-        }
-        runtimeNotice = RuntimeNotice(
-            text: "这次语音输入已取消。",
-            tone: .info
-        )
-    }
-
-    private func mergedVoiceDraft(_ transcript: String) -> String {
-        let cleaned = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard cleaned.isEmpty == false else { return draft }
-        let prefix = draftBeforeVoiceInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard prefix.isEmpty == false else { return cleaned }
-        if cleaned.hasPrefix(prefix) {
-            return cleaned
-        }
-        let separator = prefix.hasSuffix("，") || prefix.hasSuffix("。") || prefix.hasSuffix(",") || prefix.hasSuffix(".") ? "" : " "
-        return prefix + separator + cleaned
-    }
-
-    private func composeVoiceTranscript() -> String {
-        let committed = committedVoiceTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
-        let live = liveVoiceTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
-        if committed.isEmpty { return live }
-        if live.isEmpty { return committed }
-        if committed.hasSuffix(live) { return committed }
-        if live.hasPrefix(committed) { return live }
-        let separator = committed.hasSuffix("，") || committed.hasSuffix("。") || committed.hasSuffix(",") || committed.hasSuffix(".") ? "" : " "
-        return committed + separator + live
-    }
-
-    private func appendVoiceChunk(_ existing: String, chunk: String) -> String {
-        let trimmedExisting = existing.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedChunk = chunk.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmedChunk.isEmpty == false else { return trimmedExisting }
-        guard trimmedExisting.isEmpty == false else { return trimmedChunk }
-        if trimmedExisting.hasSuffix(trimmedChunk) { return trimmedExisting }
-        if trimmedChunk.hasPrefix(trimmedExisting) { return trimmedChunk }
-        let separator = trimmedExisting.hasSuffix("，") || trimmedExisting.hasSuffix("。") || trimmedExisting.hasSuffix(",") || trimmedExisting.hasSuffix(".") ? "" : " "
-        return trimmedExisting + separator + trimmedChunk
-    }
-
-    private func refineVoiceTranscript(_ transcript: String) -> String {
-        var value = transcript
-            .replacingOccurrences(of: "  ", with: " ")
-            .replacingOccurrences(of: "\n\n", with: "\n")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        let punctuationPairs = [
-            (" ,", ","),
-            (" .", "."),
-            (" !", "!"),
-            (" ?", "?"),
-            (" ，", "，"),
-            (" 。", "。"),
-            (" ？", "？"),
-            (" ！", "！")
-        ]
-        for (source, target) in punctuationPairs {
-            value = value.replacingOccurrences(of: source, with: target)
-        }
-        return value
-    }
-
-    private func removingVoiceIndicatorDots(from value: String) -> String {
-        if value.hasSuffix("...") {
-            return String(value.dropLast(3))
-        }
-        if value.hasSuffix("..") {
-            return String(value.dropLast(2))
-        }
-        if value.hasSuffix(".") {
-            return String(value.dropLast())
-        }
-        if let strayDotsRange = value.range(
-            of: #"\.{2,3}(?=[^\s]{1,8}$)"#,
-            options: .regularExpression
-        ) {
-            return value.replacingCharacters(in: strayDotsRange, with: "")
-        }
-        return value
-    }
-
-    private func promotePreviousLiveTranscriptIfNeeded(
-        committed: String,
-        currentLive: String,
-        incoming: String
-    ) -> String {
-        let trimmedCurrent = currentLive.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedIncoming = incoming.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmedCurrent.isEmpty == false, trimmedIncoming.isEmpty == false else {
-            return committed
-        }
-        if trimmedIncoming == trimmedCurrent { return committed }
-        if trimmedIncoming.hasPrefix(trimmedCurrent) { return committed }
-        if trimmedCurrent.hasPrefix(trimmedIncoming) { return committed }
-        return appendVoiceChunk(committed, chunk: trimmedCurrent)
-    }
-
-    private func finishVoiceSessionWithTimeout(
-        _ session: DoubaoOfficialASRSession
-    ) async throws -> VoiceTranscriptionResult {
-        try await withThrowingTaskGroup(of: VoiceTranscriptionResult.self) { group in
-            group.addTask {
-                try await session.finish()
-            }
-            group.addTask {
-                try await Task.sleep(for: .seconds(6))
-                throw VoiceTranscriptionError.connectionFailed("语音整理超时了，请再试一次。")
-            }
-
-            guard let first = try await group.next() else {
-                throw VoiceTranscriptionError.connectionFailed("语音整理失败了，请再试一次。")
-            }
-            group.cancelAll()
-            return first
-        }
-    }
-
-    private enum MicrophonePermissionResult {
-        case granted
-        case requestedNow
-        case denied
-    }
-
     private struct ActionExecutionOutcome {
         let reply: String
         let summary: String
@@ -1633,33 +1231,6 @@ struct ChatHomeView: View {
     private struct ResolvedReminderTarget {
         let targetText: String
         let identifier: String?
-    }
-
-    private func requestMicrophonePermissionIfNeeded() async -> MicrophonePermissionResult {
-        switch AVAudioApplication.shared.recordPermission {
-        case .granted:
-            return .granted
-        case .denied:
-            return .denied
-        case .undetermined:
-            let granted = await withCheckedContinuation { continuation in
-                AVAudioApplication.requestRecordPermission { granted in
-                    continuation.resume(returning: granted)
-                }
-            }
-            return granted ? .requestedNow : .denied
-        @unknown default:
-            return .denied
-        }
-    }
-
-    private func readableVoiceError(_ error: Error) -> String {
-        if let localized = error as? LocalizedError,
-           let description = localized.errorDescription,
-           description.isEmpty == false {
-            return description
-        }
-        return error.localizedDescription
     }
 
     private func executeResultAction(
@@ -3385,7 +2956,7 @@ private struct ModelSetupPromptSheet: View {
 
 #Preview {
     NavigationStack {
-        ChatHomeView()
+        ChatHomeView(voiceInteraction: VoiceInteractionState())
     }
     .environment(AppModel.previewFinished)
     .modelContainer(for: [ChatSession.self, ChatMessage.self, ActionLog.self], inMemory: true)
@@ -4377,27 +3948,35 @@ private struct ChatComposer: View {
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 10) {
-            switch inputMode {
-            case .text:
-                textComposerField
+            if voiceState.phase == .finalizing {
+                finalizingVoiceField
+            } else {
+                switch inputMode {
+                case .text:
+                    textComposerField
 
-                if trimmedDraft.isEmpty == false {
-                    ComposerAccessoryButton(
-                        mode: .send,
-                        isDisabled: isSending || isStreamingReply,
-                        onTap: onSend
-                    )
-                    .frame(width: 44, height: 44)
-                    .transition(.scale.combined(with: .opacity))
+                    if trimmedDraft.isEmpty == false {
+                        ComposerAccessoryButton(
+                            isDisabled: isSending || isStreamingReply,
+                            onTap: onSend
+                        )
+                        .frame(width: 44, height: 44)
+                        .transition(.scale.combined(with: .opacity))
+                    }
+                case .voice:
+                    voiceComposerField
                 }
-            case .voice:
-                voiceComposerField
             }
         }
         .padding(.horizontal, 16)
         .padding(.top, 12)
         .padding(.bottom, 12)
-        .background(.ultraThinMaterial)
+        .background(AIGTDColor.surface.opacity(0.98))
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Color.primary.opacity(0.045))
+                .frame(height: 0.5)
+        }
         .animation(.easeOut(duration: 0.16), value: trimmedDraft.isEmpty)
     }
 
@@ -4416,13 +3995,8 @@ private struct ChatComposer: View {
                     isFocused: $isFocused,
                     focusBridge: focusBridge,
                     measuredHeight: $composerHeight,
-                    tailHighlightLength: 0,
-                    tailAnimatedDotsCount: 0,
                     textContainerInset: textContainerInset,
-                    shouldHideCaret: false,
-                    isEditable: true,
-                    isVoiceInputActive: false,
-                    onVoiceInputTakeoverByKeyboard: {}
+                    isEditable: true
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .padding(.trailing, composerHorizontalPadding)
@@ -4435,6 +4009,19 @@ private struct ChatComposer: View {
                         .padding(.leading, textContainerInset.left)
                         .padding(.top, textContainerInset.top)
                         .allowsHitTesting(false)
+
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .voiceTapOrHold(
+                            state: voiceState,
+                            configuration: voiceConfiguration,
+                            draft: $draft,
+                            isEnabled: isSending == false && isStreamingReply == false,
+                            onTap: focusTextComposer,
+                            onUnavailable: onVoiceUnavailable
+                        )
+                        .accessibilityLabel("消息输入框")
+                        .accessibilityHint("轻点输入文字，按住开始语音输入")
                 }
             }
         }
@@ -4446,45 +4033,57 @@ private struct ChatComposer: View {
                 .strokeBorder(Color.black.opacity(0.035))
         }
         .animation(.easeOut(duration: 0.14), value: composerHeight)
-        .contentShape(Rectangle())
-        .voiceHoldToTalk(
-            state: voiceState,
-            configuration: voiceConfiguration,
-            draft: $draft,
-            isEnabled: trimmedDraft.isEmpty,
-            onUnavailable: onVoiceUnavailable
-        )
     }
 
     private var voiceComposerField: some View {
-        HStack(spacing: 2) {
-            keyboardButton
-
-            ZStack {
-                Color.clear
-
-                Text("按住 说话")
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(.primary)
-            }
+        ZStack {
+            Text("按住 说话")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.primary)
                 .frame(maxWidth: .infinity, minHeight: 44)
-                .contentShape(Rectangle())
-                .voiceHoldToTalk(
-                    state: voiceState,
-                    configuration: voiceConfiguration,
-                    draft: $draft,
-                    onUnavailable: onVoiceUnavailable
-                )
-                .accessibilityLabel("按住说话")
-                .accessibilityHint("按住开始录音，松手后文字进入输入框")
+
+            HStack(spacing: 0) {
+                keyboardButton
+                    .padding(.leading, 4)
+
+                Color.clear
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .contentShape(Rectangle())
+                    .voiceHoldToTalk(
+                        state: voiceState,
+                        configuration: voiceConfiguration,
+                        draft: $draft,
+                        isEnabled: isSending == false && isStreamingReply == false,
+                        onUnavailable: onVoiceUnavailable
+                    )
+                    .accessibilityLabel("按住说话")
+                    .accessibilityHint("按住开始录音，松手后文字进入输入框")
+            }
         }
-        .padding(.leading, 4)
         .frame(height: 44)
         .background(AIGTDColor.surface.opacity(0.96), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .strokeBorder(Color.black.opacity(0.035))
         }
+    }
+
+    private var finalizingVoiceField: some View {
+        HStack(spacing: 10) {
+            ProgressView()
+                .controlSize(.small)
+
+            Text("正在转成文字…")
+                .font(.body.weight(.medium))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, minHeight: 44)
+        .background(AIGTDColor.surface.opacity(0.96), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(Color.black.opacity(0.035))
+        }
+        .accessibilityLabel("正在把语音转成文字")
     }
 
     private var microphoneButton: some View {
@@ -4525,6 +4124,16 @@ private struct ChatComposer: View {
         .disabled(isSending || voiceState.phase == .finalizing)
         .accessibilityLabel("切换到键盘输入")
     }
+
+    private func focusTextComposer() {
+        inputMode = .text
+        isFocused = true
+        focusRequestID = UUID()
+        Task { @MainActor in
+            await Task.yield()
+            focusBridge.focus()
+        }
+    }
 }
 
 private struct GrowingComposerTextView: UIViewRepresentable {
@@ -4533,13 +4142,8 @@ private struct GrowingComposerTextView: UIViewRepresentable {
     @Binding var isFocused: Bool
     @ObservedObject var focusBridge: ComposerTextViewFocusBridge
     @Binding var measuredHeight: CGFloat
-    let tailHighlightLength: Int
-    let tailAnimatedDotsCount: Int
     let textContainerInset: UIEdgeInsets
-    let shouldHideCaret: Bool
     let isEditable: Bool
-    let isVoiceInputActive: Bool
-    let onVoiceInputTakeoverByKeyboard: () -> Void
 
     private var minHeight: CGFloat {
         let lineHeight = UIFont.preferredFont(forTextStyle: .body).lineHeight
@@ -4557,8 +4161,7 @@ private struct GrowingComposerTextView: UIViewRepresentable {
             measuredHeight: $measuredHeight,
             isFocused: $isFocused,
             minHeight: minHeight,
-            maxHeight: maxHeight,
-            onVoiceInputTakeoverByKeyboard: onVoiceInputTakeoverByKeyboard
+            maxHeight: maxHeight
         )
     }
 
@@ -4595,10 +4198,7 @@ private struct GrowingComposerTextView: UIViewRepresentable {
         focusBridge.textView = uiView
         let didUpdateText = context.coordinator.applyDisplayedText(
             to: uiView,
-            text: text,
-            tailHighlightLength: tailHighlightLength,
-            tailAnimatedDotsCount: tailAnimatedDotsCount,
-            shouldHideCaret: shouldHideCaret
+            text: text
         )
         if uiView.textContainerInset != textContainerInset {
             uiView.textContainerInset = textContainerInset
@@ -4611,8 +4211,6 @@ private struct GrowingComposerTextView: UIViewRepresentable {
         if uiView.isSelectable == false {
             uiView.isSelectable = true
         }
-        context.coordinator.isVoiceInputActive = isVoiceInputActive
-
         if didUpdateText || didBoundsChange {
             context.coordinator.scheduleHeightUpdate(for: uiView)
         }
@@ -4621,6 +4219,7 @@ private struct GrowingComposerTextView: UIViewRepresentable {
         if isFocused, uiView.window != nil, uiView.isFirstResponder == false {
             uiView.becomeFirstResponder()
         }
+        focusBridge.applyPendingCaretPosition()
     }
 
     final class Coordinator: NSObject, UITextViewDelegate {
@@ -4629,13 +4228,10 @@ private struct GrowingComposerTextView: UIViewRepresentable {
         @Binding private var isFocused: Bool
         private let minHeight: CGFloat
         private let maxHeight: CGFloat
-        private let onVoiceInputTakeoverByKeyboard: () -> Void
-        var isVoiceInputActive = false
         private var lastFocusRequestID = UUID()
         private var lastRenderedDisplayText = ""
         private var isApplyingDisplayUpdate = false
         private var lastKnownWidth: CGFloat = 0
-        private var hasPendingVoiceTakeoverDotCleanup = false
         private var heightUpdateScheduled = false
 
         init(
@@ -4643,15 +4239,13 @@ private struct GrowingComposerTextView: UIViewRepresentable {
             measuredHeight: Binding<CGFloat>,
             isFocused: Binding<Bool>,
             minHeight: CGFloat,
-            maxHeight: CGFloat,
-            onVoiceInputTakeoverByKeyboard: @escaping () -> Void
+            maxHeight: CGFloat
         ) {
             _text = text
             _measuredHeight = measuredHeight
             _isFocused = isFocused
             self.minHeight = minHeight
             self.maxHeight = maxHeight
-            self.onVoiceInputTakeoverByKeyboard = onVoiceInputTakeoverByKeyboard
         }
 
         func textViewDidBeginEditing(_ textView: UITextView) {
@@ -4667,58 +4261,24 @@ private struct GrowingComposerTextView: UIViewRepresentable {
                 scheduleHeightUpdate(for: textView)
                 return
             }
-            let rawText = textView.text ?? ""
-            var committedText = rawText
-            let hasMarkedText = textView.markedTextRange != nil
-            if isVoiceInputActive {
-                onVoiceInputTakeoverByKeyboard()
-                isVoiceInputActive = false
-                hasPendingVoiceTakeoverDotCleanup = true
-            }
-            if hasPendingVoiceTakeoverDotCleanup, hasMarkedText == false {
-                committedText = removingVoiceIndicatorDots(from: rawText)
-                hasPendingVoiceTakeoverDotCleanup = false
-                if committedText != rawText {
-                    let selection = textView.selectedRange
-                    textView.text = committedText
-                    let location = min(selection.location, committedText.count)
-                    textView.selectedRange = NSRange(location: location, length: 0)
-                }
-            }
+            let committedText = textView.text ?? ""
             _ = noteBoundsChange(for: textView)
             text = committedText
             lastRenderedDisplayText = committedText
             scheduleHeightUpdate(for: textView)
         }
 
-        func textView(
-            _ textView: UITextView,
-            shouldChangeTextIn range: NSRange,
-            replacementText replacement: String
-        ) -> Bool {
-            // Keep IME composition stable (especially Chinese pinyin) by deferring
-            // voice->keyboard takeover to `textViewDidChange`, after UIKit applies
-            // the first input event.
-            return true
-        }
-
         @discardableResult
         func applyDisplayedText(
             to textView: UITextView,
-            text: String,
-            tailHighlightLength: Int,
-            tailAnimatedDotsCount: Int,
-            shouldHideCaret _: Bool
+            text: String
         ) -> Bool {
             if textView.markedTextRange != nil {
                 lastRenderedDisplayText = textView.text ?? lastRenderedDisplayText
                 return false
             }
-            _ = max(0, min(tailHighlightLength, text.count))
-            let clampedDots = max(0, min(3, tailAnimatedDotsCount))
-            let shouldShowDots = clampedDots > 0 && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-            let dotsSuffix = shouldShowDots ? String(repeating: ".", count: clampedDots) : ""
-            let displayText = text + dotsSuffix
+            let displayText = text
+            let textUTF16Length = text.utf16.count
 
             if lastRenderedDisplayText == displayText {
                 return false
@@ -4736,14 +4296,10 @@ private struct GrowingComposerTextView: UIViewRepresentable {
             textView.invalidateIntrinsicContentSize()
             textView.setNeedsLayout()
 
-            if shouldShowDots {
-                textView.selectedRange = NSRange(location: text.count, length: 0)
-            } else if textView.isFirstResponder {
-                let location = min(selection.location, text.count)
-                let length = min(selection.length, max(0, text.count - location))
-                textView.selectedRange = NSRange(location: location, length: length)
+            if textView.isFirstResponder {
+                textView.selectedRange = ComposerTextSelectionPolicy.clampedRange(selection, in: text)
             } else if selection.length > 0 {
-                textView.selectedRange = NSRange(location: text.count, length: 0)
+                textView.selectedRange = NSRange(location: textUTF16Length, length: 0)
             }
 
             lastRenderedDisplayText = displayText
@@ -4832,35 +4388,10 @@ private struct GrowingComposerTextView: UIViewRepresentable {
             )
         }
 
-        private func removingVoiceIndicatorDots(from value: String) -> String {
-            if value.hasSuffix("...") {
-                return String(value.dropLast(3))
-            }
-            if value.hasSuffix("..") {
-                return String(value.dropLast(2))
-            }
-            if value.hasSuffix(".") {
-                return String(value.dropLast())
-            }
-            if let strayDotsRange = value.range(
-                of: #"\.{2,3}(?=[^\s]{1,8}$)"#,
-                options: .regularExpression
-            ) {
-                return value.replacingCharacters(in: strayDotsRange, with: "")
-            }
-            return value
-        }
     }
 }
 
 private struct ComposerAccessoryButton: View {
-    enum Mode {
-        case voice
-        case stop
-        case send
-    }
-
-    let mode: Mode
     let isDisabled: Bool
     let onTap: () -> Void
 
@@ -4870,19 +4401,9 @@ private struct ComposerAccessoryButton: View {
                 Circle()
                     .fill(backgroundColor)
 
-                if mode == .stop {
-                    Image(systemName: "stop.fill")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(.white)
-                } else if mode == .send {
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(.white)
-                } else {
-                    Image(systemName: "mic.fill")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(.white)
-                }
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(.white)
             }
         }
         .buttonStyle(.plain)
@@ -4891,27 +4412,45 @@ private struct ComposerAccessoryButton: View {
     }
 
     private var backgroundColor: Color {
-        switch mode {
-        case .voice:
-            return Color.orange.opacity(0.92)
-        case .stop:
-            return Color.blue.opacity(0.92)
-        case .send:
-            return Color.blue.opacity(0.92)
-        }
+        Color.blue.opacity(0.92)
+    }
+}
+
+enum ComposerTextSelectionPolicy {
+    static func clampedRange(_ range: NSRange, in text: String) -> NSRange {
+        let utf16Length = text.utf16.count
+        let location = min(max(range.location, 0), utf16Length)
+        let length = min(max(range.length, 0), utf16Length - location)
+        return NSRange(location: location, length: length)
     }
 }
 
 @MainActor
-private final class ComposerTextViewFocusBridge: ObservableObject {
+final class ComposerTextViewFocusBridge: ObservableObject {
     weak var textView: UITextView?
+    private var pendingCaretEndText: String?
 
-    func focus() {
+    func focus(caretAtEndOf text: String? = nil) {
+        if let text {
+            pendingCaretEndText = text
+        }
         textView?.becomeFirstResponder()
+        applyPendingCaretPosition()
     }
 
     func blur() {
         textView?.resignFirstResponder()
+    }
+
+    func applyPendingCaretPosition() {
+        guard let pendingCaretEndText,
+              let textView,
+              textView.text == pendingCaretEndText else { return }
+
+        let end = pendingCaretEndText.utf16.count
+        textView.selectedRange = NSRange(location: end, length: 0)
+        textView.scrollRangeToVisible(textView.selectedRange)
+        self.pendingCaretEndText = nil
     }
 }
 

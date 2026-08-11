@@ -104,6 +104,7 @@ project.yml
 - Xcode 17+
 - iOS 18+
 - `xcodegen`
+- CocoaPods
 
 ### Generate the project
 
@@ -113,8 +114,12 @@ xcodegen generate
 
 ### Build
 
+The speech SDK is integrated through CocoaPods. Always open and build
+`AIGTDReminders.xcworkspace`; building the `.xcodeproj` directly omits the pod
+linkage and fails with a missing `SpeechEngineAsrToB` framework.
+
 ```bash
-xcodebuild -project AIGTDReminders.xcodeproj \
+xcodebuild -workspace AIGTDReminders.xcworkspace \
   -scheme AIGTDReminders \
   -destination 'generic/platform=iOS' \
   CODE_SIGNING_ALLOWED=NO build

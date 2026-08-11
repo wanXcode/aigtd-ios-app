@@ -44,6 +44,7 @@ struct VoiceTranscriptionResult: Sendable {
 enum VoiceTranscriptionUpdate: Sendable {
     case partial(String)
     case finalTranscript(String)
+    case audioLevel(Double)
 }
 
 protocol VoiceTranscriptionService: Sendable {

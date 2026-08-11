@@ -1,11 +1,34 @@
+import Combine
 import XCTest
 @testable import AIGTDReminders
 
 @MainActor
 final class VoiceInteractionStateTests: XCTestCase {
+    func testComposerHoldRequiresMoreIntentThanDedicatedVoiceSurface() {
+        XCTAssertGreaterThanOrEqual(VoiceGesturePolicy.composerHoldDuration, 1.0)
+        XCTAssertGreaterThan(
+            VoiceGesturePolicy.composerHoldDuration,
+            VoiceGesturePolicy.dedicatedVoiceHoldDuration
+        )
+    }
+
     func testComposerPromptMatchesApprovedCopy() {
         XCTAssertEqual(VoiceInteractionState.composerPrompt, "发消息或按住说话…")
         XCTAssertEqual(VoiceInteractionState.focusedComposerPrompt, "请输入...")
+    }
+
+    func testVoiceDraftFocusMovesCaretAfterUpdatedTextArrives() {
+        let bridge = ComposerTextViewFocusBridge()
+        let textView = UITextView()
+        bridge.textView = textView
+
+        bridge.focus(caretAtEndOf: "这是第一句🙂")
+        XCTAssertEqual(textView.selectedRange.location, 0)
+
+        textView.text = "这是第一句🙂"
+        bridge.applyPendingCaretPosition()
+
+        XCTAssertEqual(textView.selectedRange, NSRange(location: textView.text.utf16.count, length: 0))
     }
 
     func testReleaseProducesEditableDraftWithoutSending() async {
@@ -40,6 +63,40 @@ final class VoiceInteractionStateTests: XCTestCase {
         XCTAssertEqual(state.preparedDraft, "明天下午联系小王，时间改成三点")
     }
 
+    func testPreparedVoicePreservesComposerEditsMadeBeforeWriteback() async {
+        let session = FakeVoiceSession(finalTranscript: "语音补充")
+        let state = makeState(session: session)
+
+        await state.beginCapture(configuration: configuration, currentDraft: "原草稿")
+        await state.releaseCapture()
+
+        let resolved = state.takePreparedDraft(currentDraft: "原草稿，手动补充")
+
+        XCTAssertEqual(resolved, "原草稿，手动补充，语音补充")
+        XCTAssertEqual(state.phase, .idle)
+    }
+
+    func testComposerSelectionClampsUsingUTF16Offsets() {
+        let text = "A🙂中"
+
+        XCTAssertEqual(text.count, 3)
+        XCTAssertEqual(text.utf16.count, 4)
+        XCTAssertEqual(
+            ComposerTextSelectionPolicy.clampedRange(
+                NSRange(location: text.utf16.count, length: 0),
+                in: text
+            ),
+            NSRange(location: 4, length: 0)
+        )
+        XCTAssertEqual(
+            ComposerTextSelectionPolicy.clampedRange(
+                NSRange(location: 3, length: 8),
+                in: text
+            ),
+            NSRange(location: 3, length: 1)
+        )
+    }
+
     func testMultipleSpokenSentencesAreAccumulated() async {
         let session = FakeVoiceSession(finalTranscript: "第二句")
         let state = makeState(session: session)
@@ -57,6 +114,36 @@ final class VoiceInteractionStateTests: XCTestCase {
         await state.releaseCapture()
 
         XCTAssertEqual(state.preparedDraft, "第一句，第二句")
+    }
+
+    func testAudioLevelDrivesWaveformAndResetsAfterCancellation() async {
+        let session = FakeVoiceSession(finalTranscript: "音量测试")
+        let state = makeState(session: session)
+
+        await state.beginCapture(configuration: configuration, currentDraft: "")
+        await session.emit(.audioLevel(0.8))
+
+        XCTAssertEqual(state.audioLevel, 0.36, accuracy: 0.001)
+
+        state.cancelCapture()
+        XCTAssertEqual(state.audioLevel, 0)
+    }
+
+    func testAudioLevelDoesNotInvalidateTheInteractionCoordinator() async {
+        let session = FakeVoiceSession(finalTranscript: "音量隔离测试")
+        let state = makeState(session: session)
+        await state.beginCapture(configuration: configuration, currentDraft: "")
+
+        var coordinatorUpdates = 0
+        let observation = state.objectWillChange.sink {
+            coordinatorUpdates += 1
+        }
+
+        await session.emit(.audioLevel(0.8))
+
+        XCTAssertEqual(state.audioLevel, 0.36, accuracy: 0.001)
+        XCTAssertEqual(coordinatorUpdates, 0)
+        observation.cancel()
     }
 
     func testCumulativePartialTranscriptKeepsAllSpokenLines() async {
@@ -195,6 +282,7 @@ final class VoiceInteractionStateTests: XCTestCase {
         await session.waitUntilFinishStarts()
         XCTAssertEqual(session.finishCallCount, 1)
         XCTAssertEqual(state.phase, .finalizing)
+        XCTAssertFalse(state.showsCaptureOverlay)
 
         state.cancelCapture()
         session.resolve(transcript: "迟到的识别结果")
@@ -315,10 +403,10 @@ private final class DeferredFinishVoiceSession: VoiceLiveTranscriptionSession, @
 
     func finish() async throws -> VoiceTranscriptionResult {
         finishCallCount += 1
-        finishStartedContinuation?.resume()
-        finishStartedContinuation = nil
         return try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
+            finishStartedContinuation?.resume()
+            finishStartedContinuation = nil
         }
     }
 
