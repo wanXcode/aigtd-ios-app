@@ -1,3 +1,4 @@
+@preconcurrency import EventKit
 import Foundation
 import Observation
 import SwiftUI
@@ -5,9 +6,11 @@ import UIKit
 
 struct MainTabView: View {
     @Environment(AppModel.self) private var appModel
+    @Environment(\.scenePhase) private var scenePhase
     @State private var welcomeStore = XiaomanWelcomeStore()
     @StateObject private var voiceInteraction = VoiceInteractionState()
     @State private var showsSettings = false
+    @State private var reminderRefreshTask: Task<Void, Never>?
 #if DEBUG || INTERNAL
     @State private var showsDeveloperSettings = false
 #endif
@@ -60,6 +63,9 @@ struct MainTabView: View {
         }
 #endif
         .onChange(of: appModel.selectedTab) { _, selectedTab in
+            if selectedTab == .reminders {
+                scheduleReminderRefresh(delay: .zero)
+            }
             guard selectedTab == .agent else { return }
             appModel.selectedTab = .chat
 #if DEBUG || INTERNAL
@@ -68,13 +74,34 @@ struct MainTabView: View {
             showsSettings = true
 #endif
         }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            scheduleReminderRefresh(delay: .zero)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .EKEventStoreChanged)) { _ in
+            scheduleReminderRefresh(delay: .milliseconds(250))
+        }
         .onChange(of: voiceInteraction.phase) { _, phase in
             announceVoicePhaseIfNeeded(phase)
+        }
+        .onDisappear {
+            reminderRefreshTask?.cancel()
         }
     }
 
     private var publicTabSelection: AppTab {
         appModel.selectedTab == .reminders ? .reminders : .chat
+    }
+
+    private func scheduleReminderRefresh(delay: Duration) {
+        reminderRefreshTask?.cancel()
+        reminderRefreshTask = Task { @MainActor in
+            if delay != .zero {
+                try? await Task.sleep(for: delay)
+            }
+            guard Task.isCancelled == false else { return }
+            await appModel.refreshReminderLists()
+        }
     }
 
     private func announceVoicePhaseIfNeeded(_ phase: VoiceInteractionState.Phase) {

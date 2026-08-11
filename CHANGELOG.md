@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.0 (25) - TestFlight Candidate
+## 0.7.0 (26) - TestFlight Candidate
 
 `0.7.0` upgrades the existing reliable task capabilities into a public-facing product experience without expanding the smart-planning scope.
 
@@ -34,6 +34,9 @@
 - fixed stale reminder context leaking into unrelated Chat turns after returning from task details
 - fixed denied Reminders permission advancing onboarding as if access had succeeded
 - fixed stale cached tasks appearing current after a reminder refresh failure
+- refresh Tasks when the tab opens, the app returns to the foreground, or EventKit reports an external Reminders change
+- prevent an older asynchronous reminder refresh from overwriting a newer system snapshot
+- hide completed reminders in the read-only Tasks overview so its visible items stay consistent with Apple Reminders' default view
 
 ### Safety
 
@@ -55,6 +58,8 @@
 - generic iOS Build 25 compilation succeeds; 24 focused voice and viewport tests pass on iPhone 15 Pro Max with 0 failures
 - the signed `0.7.0 (25)` archive and embedded dynamic dependencies pass inspection
 - uploaded `0.7.0 (25)` to App Store Connect on 2026-08-04; Xcode returned `Upload succeeded` and `EXPORT SUCCEEDED`
+- generic iOS Build 26 compilation and test-target compilation succeed after the Reminders synchronization fixes
+- the signed Build 26 development app launches on iPhone, and manual acceptance confirms previously stale completed tasks disappear from the Tasks overview
 - TestFlight upload and in-place upgrade acceptance are recorded in `docs/releases/v0.7.0-test-plan.md`
 
 ## 0.6.0 - 2026-08-02

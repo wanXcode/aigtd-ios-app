@@ -30,7 +30,7 @@ enum ReminderOverviewPolicy {
         lists: [ReminderListInfo],
         items: [ReminderItemInfo]
     ) -> [ReminderOverviewSection] {
-        var remainingItems = items
+        var remainingItems = items.filter { $0.isCompleted == false }
         var claimedListKeys = Set<String>()
         let fallbackListKeysByTitle = uniqueListKeysByTitle(lists)
 
@@ -227,6 +227,7 @@ final class AppModel {
     var pendingReminderFocusIdentifier: String?
     private var hasBootstrappedAfterLaunch = false
     private var reminderOverviewOrderState = ReminderOverviewOrderState.empty
+    private var reminderRefreshGeneration = 0
 
     var remindersAccessGranted: Bool {
         if #available(iOS 17.0, *) {
@@ -254,6 +255,7 @@ final class AppModel {
     func refreshReminderPermission() async {
         reminderPermissionStatus = EKEventStore.authorizationStatus(for: .reminder)
         guard remindersAccessGranted else {
+            reminderRefreshGeneration += 1
             reminderLists = []
             reminderItems = []
             reminderListsErrorMessage = ""
@@ -277,6 +279,7 @@ final class AppModel {
 
     func refreshReminderLists() async {
         guard remindersAccessGranted else {
+            reminderRefreshGeneration += 1
             reminderLists = []
             reminderItems = []
             reminderListsErrorMessage = ""
@@ -284,17 +287,25 @@ final class AppModel {
             return
         }
 
+        reminderRefreshGeneration += 1
+        let refreshGeneration = reminderRefreshGeneration
         isLoadingReminderLists = true
-        defer { isLoadingReminderLists = false }
+        defer {
+            if refreshGeneration == reminderRefreshGeneration {
+                isLoadingReminderLists = false
+            }
+        }
 
         do {
             let refreshedLists = try ReminderStoreService().fetchReminderLists()
             let refreshedItems = try await fetchReminderItemsInSystemOrder()
+            guard refreshGeneration == reminderRefreshGeneration else { return }
             reminderLists = refreshedLists
             reminderItems = refreshedItems
             reminderListsErrorMessage = ""
             lastReminderSyncAt = .now
         } catch {
+            guard refreshGeneration == reminderRefreshGeneration else { return }
             reminderListsErrorMessage = error.localizedDescription
         }
     }

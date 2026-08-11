@@ -120,6 +120,41 @@ final class ReminderOverviewPolicyTests: XCTestCase {
         XCTAssertEqual(sections[1].items[1].title, "项目二已更新")
     }
 
+    func testStableOrderRemovesItemsMissingFromLatestSystemSnapshot() {
+        let firstRefresh = ReminderOverviewPolicy.stabilizedItems(
+            [
+                makeItem(id: "kept", title: "保留任务", listID: "inbox", listTitle: "收集箱"),
+                makeItem(id: "deleted", title: "已在系统删除", listID: "inbox", listTitle: "收集箱")
+            ],
+            previousState: .empty
+        )
+
+        let secondRefresh = ReminderOverviewPolicy.stabilizedItems(
+            [makeItem(id: "kept", title: "保留任务", listID: "inbox", listTitle: "收集箱")],
+            previousState: firstRefresh.state
+        )
+
+        XCTAssertEqual(secondRefresh.items.map(\.id), ["kept"])
+    }
+
+    func testSectionsHideCompletedItemsLikeSystemRemindersDefaultView() {
+        let sections = ReminderOverviewPolicy.sections(
+            lists: [ReminderListInfo(id: "inbox", title: "收集箱")],
+            items: [
+                makeItem(id: "open", title: "未完成任务", listID: "inbox", listTitle: "收集箱"),
+                makeItem(
+                    id: "completed",
+                    title: "已完成任务",
+                    listID: "inbox",
+                    listTitle: "收集箱",
+                    isCompleted: true
+                )
+            ]
+        )
+
+        XCTAssertEqual(sections.first?.items.map(\.id), ["open"])
+    }
+
     func testSyncDescriptionNeverUsesFutureWording() {
         let now = Date(timeIntervalSince1970: 10_000)
 
