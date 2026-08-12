@@ -129,8 +129,11 @@ struct ChatHomeView: View {
             .scrollDismissesKeyboard(.interactively)
             .scrollIndicators(.hidden)
             .onScrollGeometryChange(for: Bool.self) { geometry in
-                let visibleBottom = geometry.contentOffset.y + geometry.containerSize.height
-                return geometry.contentSize.height - visibleBottom <= 72
+                ChatViewportGeometryPolicy.isNearBottom(
+                    contentHeight: geometry.contentSize.height,
+                    visibleBottom: geometry.visibleRect.maxY,
+                    bottomInset: geometry.contentInsets.bottom
+                )
             } action: { _, isNearBottom in
                 timelineIsNearBottom = isNearBottom
                 viewportController.viewportDidChange(

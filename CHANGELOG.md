@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.7.0 (27) - TestFlight Candidate
+## 0.7.0 (28) - TestFlight Candidate
 
 `0.7.0` upgrades the existing reliable task capabilities into a public-facing product experience without expanding the smart-planning scope.
 
@@ -37,6 +37,7 @@
 - refresh Tasks when the tab opens, the app returns to the foreground, or EventKit reports an external Reminders change
 - prevent an older asynchronous reminder refresh from overwriting a newer system snapshot
 - hide completed reminders in the read-only Tasks overview so its visible items stay consistent with Apple Reminders' default view
+- fix the Chat bottom-distance calculation to include safe-area content insets, so “回到最新” stays hidden when the latest message is already visible
 
 ### Safety
 
@@ -62,6 +63,9 @@
 - the signed Build 26 development app launches on iPhone, and manual acceptance confirms previously stale completed tasks disappear from the Tasks overview
 - the signed `0.7.0 (27)` Release archive succeeds with the expected team, bundle ID, arm64 architecture, and embedded `TTNetworkManager.framework`
 - uploaded `0.7.0 (27)` for TestFlight internal testing on 2026-08-12; Xcode Organizer returned `App upload complete` and marked the archive `Uploaded to Apple`
+- generic iOS Build 28 test-target compilation succeeds with the Chat safe-area bottom-distance regression coverage included
+- the signed `0.7.0 (28)` Release archive succeeds with the expected team, bundle ID, version, and embedded `TTNetworkManager.framework`
+- uploaded `0.7.0 (28)` for TestFlight internal testing on 2026-08-13; Xcode Organizer returned `App upload complete` and marked the archive `Uploaded to Apple`
 - TestFlight upload and in-place upgrade acceptance are recorded in `docs/releases/v0.7.0-test-plan.md`
 
 ## 0.6.0 - 2026-08-02

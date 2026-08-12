@@ -3,6 +3,36 @@ import XCTest
 
 @MainActor
 final class ChatViewportControllerTests: XCTestCase {
+    func testBottomGeometryAccountsForComposerSafeAreaInset() {
+        XCTAssertTrue(
+            ChatViewportGeometryPolicy.isNearBottom(
+                contentHeight: 1_600,
+                visibleBottom: 1_760,
+                bottomInset: 160
+            )
+        )
+    }
+
+    func testBottomGeometryAllowsSmallRemainingDistance() {
+        XCTAssertTrue(
+            ChatViewportGeometryPolicy.isNearBottom(
+                contentHeight: 1_600,
+                visibleBottom: 1_710,
+                bottomInset: 180
+            )
+        )
+    }
+
+    func testBottomGeometryStillRecognizesReadingHistory() {
+        XCTAssertFalse(
+            ChatViewportGeometryPolicy.isNearBottom(
+                contentHeight: 1_600,
+                visibleBottom: 1_500,
+                bottomInset: 180
+            )
+        )
+    }
+
     func testStartsFollowingLatest() {
         let controller = ChatViewportController()
 

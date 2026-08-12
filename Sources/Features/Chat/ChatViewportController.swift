@@ -1,6 +1,31 @@
 import Foundation
 import Observation
 
+enum ChatViewportGeometryPolicy {
+    static let nearBottomTolerance: CGFloat = 72
+
+    static func isNearBottom(
+        contentHeight: CGFloat,
+        visibleBottom: CGFloat,
+        bottomInset: CGFloat
+    ) -> Bool {
+        remainingDistance(
+            contentHeight: contentHeight,
+            visibleBottom: visibleBottom,
+            bottomInset: bottomInset
+        ) <= nearBottomTolerance
+    }
+
+    static func remainingDistance(
+        contentHeight: CGFloat,
+        visibleBottom: CGFloat,
+        bottomInset: CGFloat
+    ) -> CGFloat {
+        let totalScrollableBottom = contentHeight + max(0, bottomInset)
+        return max(0, totalScrollableBottom - visibleBottom)
+    }
+}
+
 @MainActor
 @Observable
 final class ChatViewportController {
